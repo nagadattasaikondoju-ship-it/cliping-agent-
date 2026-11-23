@@ -1,20 +1,29 @@
-"""Command-line interface: `clipagent <video-or-url> [options]`."""
+"""Command-line interface.
+
+    clipagent video.mp4 [options]        # same as `clipagent run video.mp4`
+    clipagent doctor                     # check requirements
+    clipagent setup                      # download models ahead of time
+    clipagent serve                      # web UI + editor
+    clipagent publish clips/ --to youtube,tiktok
+    clipagent auth youtube               # one-time OAuth for YouTube
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+from pathlib import Path
 
 from .config import Settings
-from .pipeline import run_pipeline
+from .env import load_env
+
+COMMANDS = ("run", "doctor", "setup", "serve", "publish", "auth")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def add_run_args(p: argparse.ArgumentParser) -> None:
     d = Settings()
-    p = argparse.ArgumentParser(
-        prog="clipagent",
-        description="Turn a long video into ranked, captioned 9:16 short-form clips.",
-    )
     p.add_argument("source", help="Path to a video file or a URL (YouTube, Vimeo, ...)")
     p.add_argument("-o", "--out", default="clips", help="Output directory (default: clips)")
     p.add_argument("-n", "--num-clips", type=int, default=d.num_clips)
@@ -24,40 +33,56 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Maximum clip length in seconds")
     p.add_argument("--target", dest="target_duration", type=float, default=d.target_duration,
                    help="Preferred clip length in seconds")
-    p.add_argument("--layout", choices=["auto", "crop", "blur"], default=d.layout,
-                   help="auto = face-tracked crop if faces are found, else blurred background")
-    p.add_argument("--cookies", help="cookies.txt for yt-dlp (needed for YouTube on servers)")
-    p.add_argument("--cookies-from-browser", help="Read yt-dlp cookies from a browser, e.g. chrome")
-    p.add_argument("--whisper-model", default=d.whisper_model,
-                   help="tiny | base | small | medium | large-v3 | distil-large-v3 ...")
-    p.add_argument("--device", dest="whisper_device", default=d.whisper_device)
-    p.add_argument("--language", default=None, help="Force transcription language, e.g. en")
-    p.add_argument("--transcript", default=None,
-                   help="Use an existing transcript JSON instead of running Whisper")
-    p.add_argument("--no-llm", action="store_true", help="Heuristic scoring only (no Claude)")
-    p.add_argument("--llm-model", default=d.llm_model)
-    p.add_argument("--effort", dest="llm_effort", default=d.llm_effort,
-                   choices=["low", "medium", "high", "xhigh", "max"])
-    p.add_argument("--no-captions", action="store_true")
-    p.add_argument("--no-title", action="store_true", help="Don't overlay the hook title")
-    p.add_argument("--font", dest="caption_font", default=d.caption_font)
-    p.add_argument("--font-size", dest="caption_size", type=int, default=d.caption_size)
-    p.add_argument("--highlight-color", dest="caption_highlight", default=d.caption_highlight,
+
+    v = p.add_argument_group("video")
+    v.add_argument("--layout", choices=["auto", "crop", "split", "blur"], default=d.layout,
+                   help="auto: split-screen for two-person conversations, speaker-tracking crop "
+                        "when there are faces, blurred background otherwise")
+    v.add_argument("--no-speaker-detection", action="store_true",
+                   help="Follow the largest face instead of whoever is talking")
+    v.add_argument("--resolution", default=f"{d.width}x{d.height}", help="Output WxH")
+    v.add_argument("--crf", type=int, default=d.crf)
+    v.add_argument("--preset", default=d.preset)
+
+    c = p.add_argument_group("captions")
+    c.add_argument("--no-captions", action="store_true")
+    c.add_argument("--no-title", action="store_true", help="Don't overlay the hook title")
+    c.add_argument("--emoji", action="store_true", help="Pop emoji above captions")
+    c.add_argument("--font", dest="caption_font", default=d.caption_font)
+    c.add_argument("--font-size", dest="caption_size", type=int, default=d.caption_size)
+    c.add_argument("--highlight-color", dest="caption_highlight", default=d.caption_highlight,
                    help="Hex RGB colour of the active word (default 00E5FF)")
-    p.add_argument("--words-per-caption", dest="caption_max_words", type=int,
+    c.add_argument("--words-per-caption", dest="caption_max_words", type=int,
                    default=d.caption_max_words)
-    p.add_argument("--no-uppercase", action="store_true")
-    p.add_argument("--resolution", default=f"{d.width}x{d.height}",
-                   help="Output WxH (default 1080x1920)")
-    p.add_argument("--crf", type=int, default=d.crf)
-    p.add_argument("--preset", default=d.preset)
-    p.add_argument("--dry-run", action="store_true",
-                   help="Find and score clips but don't render video")
-    return p
+    c.add_argument("--no-uppercase", action="store_true")
+
+    b = p.add_argument_group("b-roll")
+    b.add_argument("--broll", action="store_true",
+                   help="Cut away to stock footage (needs PEXELS_API_KEY or --broll-dir)")
+    b.add_argument("--broll-dir", help="Folder of your own clips; file names are matched")
+    b.add_argument("--broll-max", type=int, default=d.broll_max, help="Cutaways per clip")
+
+    a = p.add_argument_group("analysis")
+    a.add_argument("--whisper-model", default=d.whisper_model,
+                   help="tiny | base | small | medium | large-v3 | distil-large-v3 ...")
+    a.add_argument("--device", dest="whisper_device", default=d.whisper_device)
+    a.add_argument("--language", default=None, help="Force transcription language, e.g. en")
+    a.add_argument("--transcript", default=None,
+                   help="Use an existing transcript JSON instead of running Whisper")
+    a.add_argument("--no-llm", action="store_true", help="Heuristic scoring only (no Claude)")
+    a.add_argument("--llm-model", default=d.llm_model)
+    a.add_argument("--effort", dest="llm_effort", default=d.llm_effort,
+                   choices=["low", "medium", "high", "xhigh", "max"])
+
+    dl = p.add_argument_group("download")
+    dl.add_argument("--cookies", default=os.environ.get("YTDLP_COOKIES"),
+                    help="cookies.txt for yt-dlp (YouTube on servers)")
+    dl.add_argument("--cookies-from-browser", default=os.environ.get("YTDLP_COOKIES_FROM_BROWSER"),
+                    help="Read yt-dlp cookies from a browser, e.g. chrome")
+    p.add_argument("--dry-run", action="store_true", help="Find and score clips, don't render")
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def settings_from_args(args) -> Settings:
     w, _, h = args.resolution.lower().partition("x")
     s = Settings(
         num_clips=args.num_clips, min_duration=args.min_duration,
@@ -65,24 +90,167 @@ def main(argv: list[str] | None = None) -> int:
         whisper_model=args.whisper_model, whisper_device=args.whisper_device,
         language=args.language, use_llm=not args.no_llm, llm_model=args.llm_model,
         llm_effort=args.llm_effort, width=int(w), height=int(h), layout=args.layout,
+        speaker_detection=not args.no_speaker_detection,
         crf=args.crf, preset=args.preset, captions=not args.no_captions,
         caption_font=args.caption_font, caption_size=args.caption_size,
         caption_highlight=args.caption_highlight, caption_max_words=args.caption_max_words,
         caption_uppercase=not args.no_uppercase, show_title=not args.no_title,
+        emoji=args.emoji, broll=args.broll or bool(args.broll_dir), broll_dir=args.broll_dir,
+        broll_max=args.broll_max,
         cookies_file=args.cookies, cookies_from_browser=args.cookies_from_browser,
     )
-    if s.min_duration >= s.max_duration:
+    s.target_duration = min(max(s.target_duration, s.min_duration), s.max_duration)
+    return s
+
+
+def cmd_run(args) -> int:
+    from .pipeline import run_pipeline
+
+    if args.min_duration >= args.max_duration:
         print("--min must be smaller than --max", file=sys.stderr)
         return 2
-    s.target_duration = min(max(s.target_duration, s.min_duration), s.max_duration)
+    s = settings_from_args(args)
     try:
         clips = run_pipeline(args.source, args.out, s, transcript_path=args.transcript,
                              render=not args.dry_run)
     except Exception as exc:  # surface a clean message on the CLI
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(f"\nDone: {len(clips)} clips -> {args.out}/ (scores in {args.out}/clips.json)")
+    failed = [c for c in clips if c.status == "error"]
+    print(f"\nDone: {len(clips) - len(failed)} clips -> {args.out}/ "
+          f"(scores in {args.out}/clips.json)")
+    return 1 if failed and not args.dry_run else 0
+
+
+def cmd_doctor(args) -> int:
+    from .doctor import print_report, run_checks
+
+    checks = run_checks(args.whisper_model)
+    if args.json:
+        print(json.dumps([c.to_dict() for c in checks], indent=2))
+        return 0
+    return print_report(checks)
+
+
+def cmd_setup(args) -> int:
+    from .doctor import setup
+
+    return setup(args.whisper_model)
+
+
+def cmd_serve(args) -> int:
+    try:
+        from .web.server import serve
+    except ImportError:
+        print('The web UI needs extra packages: pip install -e ".[web]"', file=sys.stderr)
+        return 1
+    serve(host=args.host, port=args.port, data_dir=args.data_dir)
     return 0
+
+
+def _clips_to_post(target: Path, only: list[int] | None) -> list[dict]:
+    """Clips (with metadata) from a clips folder, or a single video file."""
+    if target.is_dir():
+        manifest = json.loads((target / "clips.json").read_text())
+        clips = [c for c in manifest["clips"] if c.get("output_path")]
+        if only:
+            clips = [c for i, c in enumerate(clips, 1) if i in only]
+        return clips
+    return [{"output_path": str(target), "title": target.stem.replace("-", " "),
+             "description": "", "hashtags": []}]
+
+
+def cmd_publish(args) -> int:
+    from .publish import PLATFORMS, PostRequest, publish
+
+    platforms = [p.strip() for p in args.to.split(",") if p.strip()]
+    bad = [p for p in platforms if p not in PLATFORMS]
+    if bad:
+        print(f"Unknown platform(s): {', '.join(bad)}. Choose from {', '.join(PLATFORMS)}",
+              file=sys.stderr)
+        return 2
+    only = [int(x) for x in args.clips.split(",")] if args.clips else None
+    clips = _clips_to_post(Path(args.target), only)
+    if not clips:
+        print("No rendered clips found.", file=sys.stderr)
+        return 1
+    errors = 0
+    for clip in clips:
+        req = PostRequest(video=Path(clip["output_path"]),
+                          title=args.title or clip.get("title", ""),
+                          description=args.description or clip.get("description", ""),
+                          hashtags=(args.hashtags.split(",") if args.hashtags
+                                    else clip.get("hashtags", [])),
+                          privacy=args.privacy)
+        for platform in platforms:
+            print(f"Posting {req.video.name} to {platform} ...")
+            result = publish(platform, req)
+            status = "ok" if result.ok else "FAILED"
+            print(f"  {status}: {result.detail} {result.url}".rstrip())
+            errors += not result.ok
+    return 1 if errors else 0
+
+
+def cmd_auth(args) -> int:
+    if args.platform != "youtube":
+        print("Only YouTube needs an interactive login. TikTok and Instagram use access tokens "
+              "set in .env (see .env.example).")
+        return 0
+    from .publish import PublishError
+    from .publish.youtube import authorize
+
+    try:
+        authorize()
+    except PublishError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="clipagent",
+        description="Turn a long video into ranked, captioned 9:16 short-form clips.")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    add_run_args(sub.add_parser("run", help="Make clips from a video or URL"))
+
+    d = sub.add_parser("doctor", help="Check that everything needed is installed and configured")
+    d.add_argument("--whisper-model", default=Settings().whisper_model)
+    d.add_argument("--json", action="store_true")
+
+    s = sub.add_parser("setup", help="Download the Whisper and face models")
+    s.add_argument("--whisper-model", default=Settings().whisper_model)
+
+    w = sub.add_parser("serve", help="Start the web UI")
+    w.add_argument("--host", default="127.0.0.1")
+    w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--data-dir", default=os.environ.get("CLIPAGENT_DATA_DIR", "clipagent-data"))
+
+    pub = sub.add_parser("publish", help="Post clips to YouTube Shorts, TikTok, Instagram Reels")
+    pub.add_argument("target", help="A clips folder (uses clips.json) or one .mp4 file")
+    pub.add_argument("--to", required=True, help="Comma list: youtube,tiktok,instagram")
+    pub.add_argument("--clips", help="Which clips from the folder, e.g. 1,3 (default: all)")
+    pub.add_argument("--title")
+    pub.add_argument("--description")
+    pub.add_argument("--hashtags", help="Comma list, overrides the generated ones")
+    pub.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private",
+                     help="Default private, so you can review before going live")
+
+    a = sub.add_parser("auth", help="Log in to a posting platform (YouTube)")
+    a.add_argument("platform", choices=["youtube", "tiktok", "instagram"])
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    load_env()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # `clipagent video.mp4 ...` is shorthand for `clipagent run video.mp4 ...`
+    if argv and argv[0] not in COMMANDS and argv[0] not in ("-h", "--help"):
+        argv.insert(0, "run")
+    args = build_parser().parse_args(argv)
+    return {"run": cmd_run, "doctor": cmd_doctor, "setup": cmd_setup, "serve": cmd_serve,
+            "publish": cmd_publish, "auth": cmd_auth}[args.command](args)
 
 
 if __name__ == "__main__":

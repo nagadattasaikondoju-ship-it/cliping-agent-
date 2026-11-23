@@ -33,7 +33,9 @@ class Settings:
     # Output video
     width: int = 1080
     height: int = 1920
-    layout: str = "auto"  # auto | crop | blur
+    layout: str = "auto"  # auto | crop | split | blur
+    speaker_detection: bool = True  # follow whoever is talking, not just the biggest face
+    analysis_fps: float = 6.0
     crf: int = 20
     preset: str = "medium"
 
@@ -46,3 +48,17 @@ class Settings:
     caption_max_words: int = 3
     caption_uppercase: bool = True
     show_title: bool = True  # overlay the clip's hook title during the first seconds
+    emoji: bool = False  # pop an emoji above captions on words like "money", "fire", "love"
+
+    # B-roll cutaways (Pexels with PEXELS_API_KEY, and/or a local folder)
+    broll: bool = False
+    broll_dir: str | None = None
+    broll_max: int = 2
+    broll_duration: float = 2.2
+
+    # Fields a clip may override individually (from the web editor)
+    @staticmethod
+    def clip_option_keys() -> tuple[str, ...]:
+        return ("layout", "captions", "show_title", "emoji", "broll", "caption_highlight",
+                "caption_font", "caption_size", "caption_uppercase", "caption_max_words",
+                "speaker_detection")

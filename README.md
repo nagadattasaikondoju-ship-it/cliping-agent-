@@ -4,57 +4,97 @@ An open-source AI clipping agent that turns long videos (podcasts, interviews, s
 
 ```
 long video / URL ──► transcribe (Whisper, word timestamps)
-                 ──► find highlights (Claude + heuristics)
-                 ──► score virality 0-100 (hook · flow · value · emotion · pacing · trend)
-                 ──► reframe to 9:16 (face-tracked virtual camera, or blurred background)
-                 ──► burn in animated word-by-word captions + hook title
-                 ──► clips/01_87_why-startups-fail.mp4 … + clips.json
+                 ──► find highlights + score virality (Claude + heuristics)
+                 ──► reframe to 9:16: follow the active speaker · split-screen · blurred full frame
+                 ──► animated captions, hook title, emoji, B-roll cutaways
+                 ──► review & edit in the web UI ──► post to YouTube Shorts / TikTok / Instagram Reels
 ```
 
 ## Features
 
-- **Highlight detection.** Claude reads the timestamped transcript and picks moments that stand on their own: a strong hook, a payoff, a clean ending. A heuristic scorer (hook words, questions, payoff phrases, loudness, speaking pace, dead air, topical keywords) runs alongside it and takes over completely when no API key is set.
-- **Virality score.** Each clip gets a 0–100 score with a breakdown (`hook`, `flow`, `value`, `emotion`, `pacing`, `trend`). With Claude enabled, the score is 60% Claude and 40% heuristics.
-- **9:16 reframing.** Faces are detected with OpenCV YuNet. A smoothed "virtual camera" uses a dead-zone, so it doesn't jitter, eases onto the subject when they move, and hard-cuts when the active subject jumps (for example, a speaker change). Footage without faces (screen recordings, slides) gets a blurred-background layout so nothing is cropped away.
-- **Captions.** Bold, outlined, 1–3 words at a time. The word being spoken is highlighted and pops in. Font, size, color and case are all configurable. The hook title is overlaid for the first 3 seconds.
-- **Clean cuts.** Clips start and end on sentence and word boundaries. Audio is loudness-normalised to −14 LUFS, the usual target for social platforms.
-- **Any source.** Local files, or any URL that yt-dlp supports (YouTube, Vimeo, X, Twitch VODs, …).
+| | |
+|---|---|
+| **Highlight detection** | Claude reads the timestamped transcript and picks self-contained moments with a hook and a payoff. It also writes a title, a posting caption, hashtags and B-roll ideas. Without an API key, a heuristic scorer takes over. |
+| **Virality score** | 0–100 per clip, broken down into hook, flow, value, emotion, pacing and trend. |
+| **Active-speaker detection** | Faces are tracked through the clip, and the system measures how much each mouth moves compared with the rest of the face, during moments with speech. The camera follows whoever is talking and cuts at the moment the speaker changes. |
+| **Split-screen** | When two people take turns talking and don't fit in one vertical frame, each gets half of the screen, stacked top and bottom. |
+| **Blur layout** | Screen recordings, slides and other footage without faces keep the whole frame, placed over a blurred copy of itself. |
+| **Captions** | 1–3 words at a time. The word being spoken is highlighted and pops in. Font, size, color and case are all adjustable, and the hook title shows for the first 3 seconds. |
+| **Emoji** | An emoji pops above the caption on visual words ("money" 💰, "fire" 🔥, "love" ❤️, …). |
+| **B-roll** | Short stock-footage cutaways from Pexels (free API key), or from your own folder of clips. |
+| **Web UI + editor** | Upload a file or paste a link, watch progress, browse clips by score, trim on the transcript, change title, layout and styling, re-render, download and post. |
+| **Auto-posting** | YouTube Shorts (Data API), TikTok (Content Posting API) and Instagram Reels (Graph API). Posts are private by default. |
 
-## Requirements
+## What you need
 
-| What | Why | Required? |
+| Item | Needed? | How |
 |---|---|---|
-| Python ≥ 3.10 | runtime | yes |
-| **ffmpeg** with libass (standard builds include it) | cutting, reframing, captions, encoding | yes |
-| `pip install` deps (numpy, opencv, faster-whisper, anthropic, yt-dlp) | see `pyproject.toml` | yes |
-| **`ANTHROPIC_API_KEY`** | Claude highlight detection and scoring (much better clip picks) | optional, but recommended |
-| NVIDIA GPU + CUDA | 5–10× faster transcription | optional |
-| YouTube cookies (`--cookies` / `--cookies-from-browser`) | YouTube blocks downloads from servers and datacenter IPs | only for YouTube on servers |
+| Python 3.10+ and **ffmpeg** | yes | the installer handles both, or use Docker |
+| **`ANTHROPIC_API_KEY`** | strongly recommended | [console.anthropic.com](https://console.anthropic.com). Without it, clip picks come from heuristics only. |
+| An NVIDIA GPU | optional | Transcription runs 5–10× faster. Use `install.sh --gpu` or the GPU Docker image. |
+| `PEXELS_API_KEY` | only for stock B-roll | free at [pexels.com/api](https://www.pexels.com/api/). `--broll-dir` works without it. |
+| YouTube cookies | only for YouTube links on servers | `--cookies-from-browser chrome`, or `YTDLP_COOKIES` |
+| Platform credentials | only for auto-posting | see [Posting](#posting) |
+| Internet on first run | yes | Downloads the Whisper model (`small` ≈ 480 MB) and the face model (230 KB) once, then caches them. |
 
-The first run downloads the Whisper model (`small` ≈ 480 MB) from Hugging Face and the YuNet face model (≈ 230 KB) from the OpenCV Zoo. Both are cached.
+Run `clipagent doctor` at any time to see what's set up and what's missing.
 
 ## Install
 
+**Installer (macOS / Linux)**: installs ffmpeg, creates `.venv`, installs everything, downloads the models and runs `doctor`:
+
 ```bash
-# macOS: brew install ffmpeg   |   Ubuntu: sudo apt install ffmpeg
 git clone <this repo> && cd cliping-agent-
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-export ANTHROPIC_API_KEY=sk-ant-...   # optional
+./scripts/install.sh            # add --gpu on Linux with an NVIDIA card
 ```
 
-## Usage
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+**Docker:**
 
 ```bash
-clipagent podcast.mp4                         # 5 clips into ./clips
-clipagent "https://youtu.be/..." -n 8 --cookies-from-browser chrome
-clipagent talk.mp4 --min 20 --max 45 --layout blur --highlight-color FFD400
-clipagent talk.mp4 --dry-run                  # just find and score, no rendering
-clipagent talk.mp4 --no-llm                   # fully offline, heuristics only
-clipagent talk.mp4 --whisper-model large-v3 --device cuda
+cp .env.example .env            # add your keys
+docker compose up --build       # http://localhost:8000
+docker compose --profile gpu up --build clipagent-gpu   # NVIDIA GPU (needs nvidia-container-toolkit)
 ```
 
-Run `clipagent --help` for all options (caption font and size, words per caption, resolution, CRF, Claude model and effort, …).
+**Manual:**
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[all]"         # core + web UI + posting
+cp .env.example .env            # add your keys
+clipagent setup                 # download models now instead of on first run
+```
+
+Keys are read from the environment, from `./.env`, or from `~/.config/clipagent/.env`.
+
+## Use it
+
+### Web UI
+
+```bash
+clipagent serve                 # http://localhost:8000
+```
+
+To run it on a server, set `CLIPAGENT_WEB_TOKEN` in `.env` to password-protect it, then start it with `clipagent serve --host 0.0.0.0`.
+
+### Command line
+
+```bash
+clipagent podcast.mp4                                   # 5 clips into ./clips
+clipagent "https://youtu.be/..." -n 8 --cookies-from-browser chrome
+clipagent talk.mp4 --emoji --broll                      # emoji + Pexels B-roll
+clipagent talk.mp4 --broll-dir ~/stock                  # B-roll from your own clips
+clipagent interview.mp4 --layout split                  # force split-screen
+clipagent talk.mp4 --min 20 --max 45 --highlight-color FFD400
+clipagent talk.mp4 --dry-run                            # find and score only
+clipagent talk.mp4 --no-llm                             # fully offline
+```
 
 Output:
 
@@ -62,8 +102,7 @@ Output:
 clips/
   01_84_the-biggest-mistake-i-made.mp4
   02_79_why-most-startups-fail.mp4
-  ...
-  clips.json      # start/end, title, hook, reason, score breakdown, layout per clip
+  clips.json   # timings, title, caption, hashtags, scores, layout, B-roll, emoji per clip
 ```
 
 ### As a library
@@ -71,14 +110,32 @@ clips/
 ```python
 from clipagent import Settings, run_pipeline
 
-clips = run_pipeline("talk.mp4", "out", Settings(num_clips=3, layout="crop"))
-for c in clips:
-    print(c.virality, c.title, c.output_path)
+clips = run_pipeline("talk.mp4", "out", Settings(num_clips=3, emoji=True))
 ```
 
-## How the scoring works
+## Posting
 
-`clipagent/highlights.py` builds every candidate window that starts and ends on a sentence boundary within the length band. It scores each one, then keeps the best non-overlapping set (greedy non-max suppression). `clipagent/llm.py` sends the transcript to Claude (`claude-opus-5-5`, structured JSON output, adaptive thinking) and asks for self-contained clips with per-dimension scores. Claude's picks are snapped to word boundaries, re-scored by the heuristics and blended. If Claude returns too few clips, heuristic picks fill the remaining slots.
+Everything is private by default (`--privacy` changes it), so you can check a clip before it goes live.
+
+```bash
+clipagent publish clips/ --to youtube,tiktok,instagram   # all clips, with their generated captions
+clipagent publish clips/ --to youtube --clips 1,3 --privacy public
+clipagent publish clips/01_84_title.mp4 --to tiktok --title "..." --hashtags ai,startups
+```
+
+| Platform | Setup |
+|---|---|
+| **YouTube Shorts** | In Google Cloud Console, enable *YouTube Data API v3*, create an OAuth client of type *Desktop app* and download `client_secret.json`. Set `YOUTUBE_CLIENT_SECRETS=/path/client_secret.json`, then run `clipagent auth youtube` once. Until your Google app passes verification, uploads may be locked to private. |
+| **TikTok** | Create an app at developers.tiktok.com with the Content Posting API and get a user access token (scope `video.upload`). Set `TIKTOK_ACCESS_TOKEN`. By default clips go to the TikTok inbox, and you finish the post in the app. `TIKTOK_MODE=direct` posts directly (scope `video.publish`). Unaudited apps can only post privately. |
+| **Instagram Reels** | Use an Instagram professional account linked to a Facebook app with `instagram_content_publish`. Set `IG_USER_ID` and `IG_ACCESS_TOKEN`. |
+
+## How it works
+
+- `highlights.py` scores every sentence-aligned window and keeps the best set that doesn't overlap. `llm.py` sends the transcript to Claude (`claude-opus-5-5`, structured JSON output). Claude's picks are snapped to word boundaries, re-scored by the heuristics, and the two scores are blended 60/40.
+- `faces.py` decodes the clip once at 640 px. It runs YuNet face detection 6×/s, links detections into tracks, and measures mouth motion minus eye-area motion (which cancels head movement) for each face. Only moments with speech count. A hysteresis step picks the speaker so the camera doesn't flicker. Because the analysis is offline, each cut is moved back to the moment the new speaker started, so there is no lag.
+- `reframe.py` turns the speaker track into a smooth virtual camera: it stays still for small movements, eases toward the subject when it moves, and hard-cuts on a speaker change. It can also decide on the split-screen layout. The result is compiled into an ffmpeg `crop` expression.
+- `render.py` stacks the layers in this order: reframed video → B-roll → captions and title (libass) → emoji. Audio is normalized to −14 LUFS.
+- `web/` is a FastAPI app with one worker thread for heavy jobs and one for uploads. Each project is a folder (`clipagent-data/jobs/<id>/`) that can be re-rendered at any time.
 
 ## Development
 
@@ -87,15 +144,16 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The tests cover segmentation, scoring, overlap suppression, caption timing, the camera path and crop expression, the Claude integration (with a mocked client and the refusal fallback), and a full end-to-end render of a synthetic video in both layouts.
+The 37 tests cover scoring, captions, emoji, the camera path, speaker selection, split detection, B-roll planning and the Pexels lookup, posting to all three platforms (against fake HTTP sessions), the web API (a full job, edits, re-render, password protection), and end-to-end renders.
+
+`scripts/make_two_speaker_video.py` builds a two-person test video with a known speaker schedule. On it, speaker detection agrees with the ground truth on 98.8% of frames.
 
 ## Roadmap
 
-- Active-speaker detection (lip movement + audio) for multi-person shots. Right now the largest or most consistent face wins.
-- Split-screen layout for two-person podcasts
-- Web UI and job queue (FastAPI) with an in-browser trim editor
-- B-roll, emoji and keyword-emphasis caption styles, background music
-- Direct publishing to TikTok, YouTube Shorts and Instagram
+- Bring in the final web design
+- Audio-visual speaker models (e.g. TalkNet) for crowded or low-light shots
+- Caption style presets, background music, filler-word removal
+- Scheduled posting and per-platform analytics
 
 ## License
 

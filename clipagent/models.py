@@ -69,6 +69,7 @@ class Clip:
     start: float
     end: float
     text: str
+    id: str = ""
     title: str = ""
     hook: str = ""
     reason: str = ""
@@ -77,6 +78,18 @@ class Clip:
     llm_score: Optional[float] = None
     output_path: Optional[str] = None
     layout: Optional[str] = None
+    # Claude's B-roll ideas: [{"time": absolute seconds, "query": "city skyline"}]
+    broll_queries: list = field(default_factory=list)
+    broll: list = field(default_factory=list)  # cuts actually used (see broll.BRollCut)
+    emojis: list = field(default_factory=list)  # [(start, end, emoji)] relative to clip
+    options: dict = field(default_factory=dict)  # per-clip Settings overrides (web editor)
+    speakers: int = 0
+    speaker_switches: int = 0
+    hashtags: list = field(default_factory=list)
+    description: str = ""
+    status: str = "pending"  # pending | rendering | done | error
+    error: str = ""
+    published: list = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -91,3 +104,10 @@ class Clip:
         d["duration"] = round(self.duration, 2)
         d["virality"] = round(self.virality, 1)
         return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Clip":
+        names = {f for f in cls.__dataclass_fields__}
+        data = {k: v for k, v in d.items() if k in names}
+        data["scores"] = ScoreBreakdown(**d.get("scores", {}))
+        return cls(**data)

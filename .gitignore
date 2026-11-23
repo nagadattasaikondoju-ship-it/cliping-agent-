@@ -7,3 +7,6 @@ clips/
 *.mp4
 *.wav
 .pytest_cache/
+clipagent-data/
+clipagent-config/
+.env

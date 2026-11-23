@@ -35,7 +35,8 @@ def _fake_client(payload, stop_reason="end_turn", calls=None):
 def _clip(start, end, virality, title):
     return dict(start=start, end=end, title=title, hook="h", reason="r", hook_score=90,
                 flow_score=80, value_score=85, emotion_score=70, trend_score=60,
-                virality_score=virality)
+                virality_score=virality, description="desc", hashtags=["#startup", "money"],
+                broll=[{"time": start + 5, "query": "counting cash"}, {"time": end + 50, "query": "x"}])
 
 
 def test_llm_clips_are_snapped_blended_and_ranked(monkeypatch):
@@ -51,6 +52,8 @@ def test_llm_clips_are_snapped_blended_and_ranked(monkeypatch):
     assert top.llm_score == 95
     assert top.scores.total == round(0.6 * 95 + 0.4 * top.heuristic_score, 1)
     assert any(abs(top.start - w.start) < 1e-9 for w in t.words)  # snapped to a word
+    assert top.hashtags == ["startup", "money"]
+    assert [b["query"] for b in top.broll_queries] == ["counting cash"]  # out-of-clip idea dropped
     req = calls[0]
     assert req["model"] == "claude-opus-5-5"
     assert req["output_config"]["format"]["type"] == "json_schema"

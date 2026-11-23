@@ -1,0 +1,40 @@
+# CPU:  docker compose up --build            -> http://localhost:8000
+# GPU:  docker compose --profile gpu up --build clipagent-gpu
+# Put your keys in .env (copy .env.example). If you expose the port beyond
+# localhost, set CLIPAGENT_WEB_TOKEN in .env to password-protect the UI.
+
+x-common: &common
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - ./clipagent-data:/data          # projects and rendered clips
+    - clipagent-cache:/cache          # Whisper/face models, emoji, b-roll
+    - ./clipagent-config:/config      # YouTube login token
+  restart: unless-stopped
+
+services:
+  clipagent:
+    <<: *common
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  clipagent-gpu:
+    <<: *common
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    ports:
+      - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  clipagent-cache:

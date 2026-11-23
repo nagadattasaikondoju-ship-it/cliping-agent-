@@ -41,7 +41,13 @@ trend = relevance to what audiences currently care about; virality = your overal
 prediction of how well it performs.
 - title: a punchy on-screen title of at most 8 words, written in the transcript's language.
 - hook: the opening line, quoted from the transcript.
-- reason: one sentence on why it will work."""
+- reason: one sentence on why it will work.
+- description: a 1-2 sentence social caption for posting the clip.
+- hashtags: 3-6 relevant hashtags without the # sign.
+- broll: 0-2 moments inside the clip where a short stock-footage cutaway would \
+illustrate what is being said. `time` is the timestamp where the word is spoken; `query` is \
+an English stock-video search of 1-3 concrete, filmable words (e.g. "city skyline night", \
+"counting cash"). Never in the first 3 seconds. Use an empty list if nothing is visual."""
 
 CLIP_SCHEMA = {
     "type": "object",
@@ -62,10 +68,22 @@ CLIP_SCHEMA = {
                     "emotion_score": {"type": "number"},
                     "trend_score": {"type": "number"},
                     "virality_score": {"type": "number"},
+                    "description": {"type": "string"},
+                    "hashtags": {"type": "array", "items": {"type": "string"}},
+                    "broll": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"time": {"type": "number"}, "query": {"type": "string"}},
+                            "required": ["time", "query"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": [
                     "start", "end", "title", "hook", "reason", "hook_score", "flow_score",
                     "value_score", "emotion_score", "trend_score", "virality_score",
+                    "description", "hashtags", "broll",
                 ],
                 "additionalProperties": False,
             },
@@ -171,6 +189,10 @@ def llm_highlights(transcript: Transcript, settings: Settings, log=print) -> lis
             start=start, end=end, text="", title=item["title"].strip(),
             hook=item["hook"].strip(), reason=item["reason"].strip(),
             scores=scores, llm_score=scores.total,
+            description=item.get("description", "").strip(),
+            hashtags=[h.strip().lstrip("#") for h in item.get("hashtags", []) if h.strip()][:8],
+            broll_queries=[{"time": float(b["time"]), "query": b["query"]}
+                           for b in item.get("broll", []) if start <= float(b["time"]) <= end],
         ))
     log(f"Claude proposed {len(clips)} clips.")
     return clips

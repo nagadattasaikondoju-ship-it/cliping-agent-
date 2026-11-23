@@ -1,138 +1,41 @@
 """Reframe landscape video to 9:16.
 
-We sample frames, detect faces, pick the main subject, and turn its path into a
-smooth "virtual camera" (dead-zone + easing so the frame doesn't jitter). The
-camera path is compiled into an ffmpeg `crop` expression. When no face is
-found (screen recordings, b-roll, slides) we use a blurred-background layout
-that keeps the whole frame visible.
+Layouts:
+- crop:  a virtual camera follows the active speaker (see faces.py), with a
+         dead-zone, easing, and hard cuts when the speaker changes.
+- split: two people talking -> each gets their own half of the frame, stacked.
+- blur:  no usable faces (screen recordings, slides, b-roll) -> the whole frame
+         over a blurred, zoomed copy of itself.
+- fit:   the source is already vertical.
+The camera path is compiled into an ffmpeg `crop` expression.
 """
 
 from __future__ import annotations
 
-import os
-import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
+from .faces import FaceAnalysis, _yunet_model, analyze_faces  # noqa: F401  (re-exported)
 from .media import VideoInfo
 
 
 @dataclass
 class ReframePlan:
-    layout: str  # "crop" | "blur" | "fit" (source is already vertical)
+    layout: str  # "crop" | "split" | "blur" | "fit"
     crop_w: int = 0
     crop_h: int = 0
     keyframes: list[tuple[float, float]] = field(default_factory=list)  # (t, crop_x)
     face_ratio: float = 0.0
+    # split layout: [(x, y, w, h), (x, y, w, h)] crops for the top and bottom halves
+    split_boxes: list[tuple[int, int, int, int]] = field(default_factory=list)
+    speakers: int = 0
+    speaker_switches: int = 0
 
 
 def _even(x: float) -> int:
     v = int(round(x))
     return v - (v % 2)
-
-
-YUNET_URLS = (
-    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
-    "face_detection_yunet/face_detection_yunet_2023mar.onnx",
-    "https://github.com/opencv/opencv_zoo/raw/main/models/"
-    "face_detection_yunet/face_detection_yunet_2023mar.onnx",
-)
-
-
-def _yunet_model() -> Path | None:
-    """Path to the YuNet face model, downloading it (~230 KB) on first use."""
-    env = os.environ.get("CLIPAGENT_FACE_MODEL")
-    if env:
-        return Path(env)
-    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "clipagent"
-    path = cache / "face_detection_yunet_2023mar.onnx"
-    if path.exists() and path.stat().st_size > 100_000:
-        return path
-    cache.mkdir(parents=True, exist_ok=True)
-    for url in YUNET_URLS:
-        try:
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                data = resp.read()
-            if len(data) > 100_000:  # guard against LFS pointers / error pages
-                path.write_bytes(data)
-                return path
-        except Exception:
-            continue
-    return None
-
-
-class FaceDetector:
-    """YuNet (OpenCV >= 4.8) with a Haar-cascade fallback for older OpenCV builds."""
-
-    def __init__(self):
-        import cv2
-
-        self.cv2 = cv2
-        self.yunet = None
-        self.haar = None
-        model = _yunet_model() if hasattr(cv2, "FaceDetectorYN") else None
-        if model is not None:
-            self.yunet = cv2.FaceDetectorYN.create(str(model), "", (320, 320), 0.7, 0.3, 50)
-        elif hasattr(cv2, "CascadeClassifier"):
-            self.haar = cv2.CascadeClassifier(
-                str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
-        else:
-            raise RuntimeError("No face detector available (could not fetch the YuNet model).")
-
-    def detect(self, image) -> list[tuple[float, float, float, float]]:
-        """Return faces as (x, y, w, h) in `image` pixels."""
-        cv2 = self.cv2
-        if self.yunet is not None:
-            h, w = image.shape[:2]
-            self.yunet.setInputSize((w, h))
-            _, faces = self.yunet.detect(image)
-            return [tuple(map(float, f[:4])) for f in (faces if faces is not None else [])]
-        gray = cv2.equalizeHist(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
-        side = max(24, int(image.shape[0] * 0.08))
-        faces = self.haar.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(side, side))
-        return [tuple(map(float, f)) for f in faces]
-
-
-def detect_subject_track(video: Path, start: float, end: float, sample_fps: float = 3.0,
-                         analysis_width: int = 640) -> tuple[np.ndarray, np.ndarray, int]:
-    """Return (times relative to start, subject centre x in source pixels or NaN, src_width)."""
-    import cv2  # imported lazily so the rest of the package works without OpenCV
-
-    try:
-        cv2.setLogLevel(2)  # silence OpenCV DNN warnings
-    except Exception:
-        pass
-    detector = FaceDetector()
-    cap = cv2.VideoCapture(str(video))
-    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    times = np.arange(start, end, 1.0 / sample_fps)
-    centers = np.full(len(times), np.nan)
-    prev_center: float | None = None
-    for i, t in enumerate(times):
-        cap.set(cv2.CAP_PROP_POS_MSEC, float(t) * 1000.0)
-        ok, frame = cap.read()
-        if not ok:
-            continue
-        scale = analysis_width / frame.shape[1]
-        small = cv2.resize(frame, (analysis_width, int(frame.shape[0] * scale)))
-        min_side = small.shape[0] * 0.06
-        faces = [f for f in detector.detect(small) if f[3] >= min_side]
-        if not faces:
-            continue
-        # Prefer the largest face, but stick with the current subject when sizes are close.
-        faces.sort(key=lambda f: f[2] * f[3], reverse=True)
-        best = faces[0]
-        if prev_center is not None and len(faces) > 1:
-            largest = best[2] * best[3]
-            close = [f for f in faces if f[2] * f[3] >= 0.6 * largest]
-            best = min(close, key=lambda f: abs((f[0] + f[2] / 2) / scale - prev_center))
-        cx = (best[0] + best[2] / 2) / scale
-        centers[i] = cx
-        prev_center = cx
-    cap.release()
-    return times - start, centers, src_w
 
 
 def smooth_camera(times: np.ndarray, centers: np.ndarray, src_w: int, crop_w: int,
@@ -210,8 +113,46 @@ def crop_x_expression(keyframes: list[tuple[float, float]]) -> str:
     return "+".join(terms)
 
 
+def split_boxes(analysis: FaceAnalysis, out_w: int, out_h: int,
+                track_ids: list[int]) -> list[tuple[int, int, int, int]]:
+    """A static crop per person, framed head-and-shoulders, for each half of the frame."""
+    aspect = out_w / (out_h / 2)
+    by_id = {t.id: t for t in analysis.tracks}
+    boxes = []
+    for tid in track_ids:
+        cx, cy, _fw, fh = by_id[tid].median_box()
+        ch = min(analysis.src_h, max(fh * 3.0, analysis.src_h * 0.45))
+        cw = ch * aspect
+        if cw > analysis.src_w:
+            cw, ch = analysis.src_w, analysis.src_w / aspect
+        x = min(max(0.0, cx - cw / 2), analysis.src_w - cw)
+        y = min(max(0.0, cy - 0.42 * ch), analysis.src_h - ch)
+        boxes.append((_even(x), _even(y), _even(cw), _even(ch)))
+    return boxes
+
+
+def choose_split(analysis: FaceAnalysis, crop_w: int, min_visible: float = 0.6,
+                 min_share: float = 0.15) -> list[int] | None:
+    """Track ids [left, right] if this looks like a two-person conversation that
+    can't fit in a single 9:16 crop, else None."""
+    if len(analysis.tracks) < 2:
+        return None
+    ranked = sorted(analysis.tracks, key=lambda t: (analysis.speaking_share(t), t.median_box()[3]),
+                    reverse=True)[:2]
+    if any(analysis.visibility(t) < min_visible for t in ranked):
+        return None
+    if any(analysis.speaking_share(t) < min_share for t in ranked):
+        return None
+    (ax, *_), (bx, *_) = ranked[0].median_box(), ranked[1].median_box()
+    if abs(ax - bx) < 0.6 * crop_w:  # close enough to share one frame
+        return None
+    left, right = sorted(ranked, key=lambda t: t.median_box()[0])
+    return [left.id, right.id]
+
+
 def plan_reframe(info: VideoInfo, start: float, end: float, layout: str,
-                 out_w: int, out_h: int) -> ReframePlan:
+                 out_w: int, out_h: int, loudness: np.ndarray | None = None,
+                 speaker_detection: bool = True, analysis_fps: float = 6.0) -> ReframePlan:
     target_aspect = out_w / out_h
     src_aspect = info.width / info.height
     if src_aspect <= target_aspect + 0.01:
@@ -222,27 +163,57 @@ def plan_reframe(info: VideoInfo, start: float, end: float, layout: str,
     if layout == "blur":
         return ReframePlan(layout="blur", crop_w=crop_w, crop_h=crop_h)
 
-    times, centers, src_w = detect_subject_track(info.path, start, end)
-    face_ratio = float(np.mean(~np.isnan(centers))) if len(centers) else 0.0
+    analysis = analyze_faces(info.path, start, end, fps=analysis_fps,
+                             loudness=loudness if speaker_detection else None)
+    face_ratio = analysis.face_ratio
+    pair: list[int] | None = None
+    if layout == "auto":
+        pair = choose_split(analysis, crop_w)
+    elif layout == "split" and len(analysis.tracks) >= 2:
+        two = sorted(analysis.tracks, key=lambda t: (analysis.speaking_share(t), t.median_box()[3]),
+                     reverse=True)[:2]
+        pair = [t.id for t in sorted(two, key=lambda t: t.median_box()[0])]
+    if pair:
+        return ReframePlan(layout="split", crop_w=crop_w, crop_h=crop_h, face_ratio=face_ratio,
+                           split_boxes=split_boxes(analysis, out_w, out_h, pair), speakers=2)
     if layout == "auto" and face_ratio < 0.3:
         return ReframePlan(layout="blur", crop_w=crop_w, crop_h=crop_h, face_ratio=face_ratio)
-    keyframes = smooth_camera(times, centers, src_w or info.width, crop_w)
-    return ReframePlan(layout="crop", crop_w=crop_w, crop_h=crop_h,
-                       keyframes=keyframes, face_ratio=face_ratio)
+
+    if speaker_detection:
+        centers = analysis.centers()
+        switches = int(np.sum(np.diff(analysis.active[analysis.active >= 0]) != 0))
+    else:  # follow the largest face
+        centers = np.full(len(analysis.times), np.nan)
+        for i in range(len(analysis.times)):
+            seen = [t.boxes[i] for t in analysis.tracks if i in t.boxes]
+            if seen:
+                centers[i] = max(seen, key=lambda f: f.w * f.h).cx
+        switches = 0
+    keyframes = smooth_camera(analysis.times, centers, analysis.src_w or info.width, crop_w)
+    return ReframePlan(layout="crop", crop_w=crop_w, crop_h=crop_h, keyframes=keyframes,
+                       face_ratio=face_ratio, speakers=len(analysis.tracks),
+                       speaker_switches=switches)
 
 
-def video_filter(plan: ReframePlan, out_w: int, out_h: int) -> str:
-    """ffmpeg filtergraph (input [0:v], output [v]) for the plan."""
+def video_filter(plan: ReframePlan, out_w: int, out_h: int, out_label: str = "v") -> str:
+    """ffmpeg filtergraph from input [0:v] to [out_label] for the plan."""
     if plan.layout == "crop":
         x = crop_x_expression(plan.keyframes)
         return (f"[0:v]crop=w={plan.crop_w}:h={plan.crop_h}:x='clip({x},0,iw-ow)':y=0,"
-                f"scale={out_w}:{out_h}:flags=lanczos,setsar=1[v]")
+                f"scale={out_w}:{out_h}:flags=lanczos,setsar=1[{out_label}]")
+    if plan.layout == "split":
+        half = out_h // 2
+        (ax, ay, aw, ah), (bx, by, bw, bh) = plan.split_boxes
+        return (f"[0:v]split=2[sa][sb];"
+                f"[sa]crop={aw}:{ah}:{ax}:{ay},scale={out_w}:{half}:flags=lanczos,setsar=1[top];"
+                f"[sb]crop={bw}:{bh}:{bx}:{by},scale={out_w}:{out_h - half}:flags=lanczos,setsar=1[bot];"
+                f"[top][bot]vstack=inputs=2[{out_label}]")
     if plan.layout == "blur":
         return (f"[0:v]split=2[bgsrc][fgsrc];"
                 f"[bgsrc]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
                 f"crop={out_w}:{out_h},boxblur=luma_radius=40:luma_power=2,eq=brightness=-0.08[bg];"
                 f"[fgsrc]scale={out_w}:-2:flags=lanczos[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]")
+                f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[{out_label}]")
     # fit: already vertical-ish; scale and pad.
     return (f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease:flags=lanczos,"
-            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[v]")
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[{out_label}]")

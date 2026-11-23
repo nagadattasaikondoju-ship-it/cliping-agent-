@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>clipagent</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">clip<span>agent</span></a>
+    <div id="status-chips" class="chips"></div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <button class="btn primary block" id="new-project-btn">+ New project</button>
+      <h3>Projects</h3>
+      <ul id="job-list" class="job-list"></ul>
+    </aside>
+
+    <main id="main"></main>
+  </div>
+
+  <!-- New project -->
+  <template id="tpl-new">
+    <section class="panel narrow">
+      <h1>Make clips from a long video</h1>
+      <form id="new-form">
+        <label class="drop" id="drop">
+          <input type="file" name="file" accept="video/*,audio/*" hidden>
+          <strong>Drop a video here</strong> or click to choose a file
+          <span class="filename"></span>
+        </label>
+        <div class="or">or</div>
+        <input class="input" name="url" type="url" placeholder="Paste a YouTube, Vimeo, X or Twitch link">
+
+        <details class="options" open>
+          <summary>Options</summary>
+          <div class="grid">
+            <label>Clips <input class="input" type="number" name="num_clips" min="1" max="30"></label>
+            <label>Min length (s) <input class="input" type="number" name="min_duration" min="5" max="170"></label>
+            <label>Max length (s) <input class="input" type="number" name="max_duration" min="10" max="180"></label>
+            <label>Layout
+              <select class="input" name="layout">
+                <option value="auto">Auto</option>
+                <option value="crop">Follow speaker</option>
+                <option value="split">Split screen</option>
+                <option value="blur">Full frame + blur</option>
+              </select>
+            </label>
+            <label>Transcription
+              <select class="input" name="whisper_model">
+                <option value="base">Fast (base)</option>
+                <option value="small">Balanced (small)</option>
+                <option value="medium">Accurate (medium)</option>
+                <option value="large-v3">Best (large-v3)</option>
+              </select>
+            </label>
+            <label>Highlight colour <input class="input" type="color" name="caption_highlight"></label>
+          </div>
+          <div class="toggles">
+            <label><input type="checkbox" name="use_llm"> Claude picks highlights</label>
+            <label><input type="checkbox" name="captions"> Captions</label>
+            <label><input type="checkbox" name="show_title"> Hook title</label>
+            <label><input type="checkbox" name="emoji"> Emoji</label>
+            <label><input type="checkbox" name="broll"> B-roll</label>
+            <label><input type="checkbox" name="speaker_detection"> Speaker detection</label>
+          </div>
+        </details>
+        <p class="error" id="new-error"></p>
+        <button class="btn primary big" type="submit">Find clips</button>
+      </form>
+    </section>
+  </template>
+
+  <!-- Editor dialog -->
+  <dialog id="editor" class="dialog wide">
+    <form method="dialog" class="dialog-head">
+      <h2>Edit clip</h2>
+      <button class="btn ghost" value="close">✕</button>
+    </form>
+    <div class="editor">
+      <div class="editor-left">
+        <video id="ed-source" controls preload="metadata"></video>
+        <div class="range-row">
+          <label>Start <input class="input" id="ed-start" type="number" step="0.1"></label>
+          <button class="btn" id="ed-set-start" type="button">Set to playhead</button>
+          <label>End <input class="input" id="ed-end" type="number" step="0.1"></label>
+          <button class="btn" id="ed-set-end" type="button">Set to playhead</button>
+          <button class="btn" id="ed-preview" type="button">▶ Preview</button>
+          <span id="ed-length" class="muted"></span>
+        </div>
+        <p class="muted small">Click a word to jump there. Shift-click to set the clip's start/end to that word.</p>
+        <div id="ed-transcript" class="transcript"></div>
+      </div>
+      <div class="editor-right">
+        <label>Title <input class="input" id="ed-title" maxlength="100"></label>
+        <label>Caption for posting <textarea class="input" id="ed-description" rows="3"></textarea></label>
+        <label>Hashtags <input class="input" id="ed-hashtags" placeholder="comma separated"></label>
+        <label>Layout
+          <select class="input" id="ed-layout">
+            <option value="">Project default</option>
+            <option value="auto">Auto</option>
+            <option value="crop">Follow speaker</option>
+            <option value="split">Split screen</option>
+            <option value="blur">Full frame + blur</option>
+          </select>
+        </label>
+        <label>Highlight colour <input class="input" type="color" id="ed-highlight"></label>
+        <div class="toggles col">
+          <label><input type="checkbox" id="ed-captions"> Captions</label>
+          <label><input type="checkbox" id="ed-show_title"> Hook title</label>
+          <label><input type="checkbox" id="ed-emoji"> Emoji</label>
+          <label><input type="checkbox" id="ed-broll"> B-roll</label>
+        </div>
+        <p class="error" id="ed-error"></p>
+        <div class="row">
+          <button class="btn primary" id="ed-save" type="button">Save &amp; re-render</button>
+          <button class="btn" id="ed-save-new" type="button">Save as new clip</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Publish dialog -->
+  <dialog id="publisher" class="dialog">
+    <form method="dialog" class="dialog-head">
+      <h2>Post clip</h2>
+      <button class="btn ghost" value="close">✕</button>
+    </form>
+    <div class="pub-body">
+      <div id="pub-platforms" class="toggles col"></div>
+      <label>Title <input class="input" id="pub-title" maxlength="100"></label>
+      <label>Caption <textarea class="input" id="pub-description" rows="3"></textarea></label>
+      <label>Hashtags <input class="input" id="pub-hashtags"></label>
+      <label>Visibility
+        <select class="input" id="pub-privacy">
+          <option value="private">Private (review first)</option>
+          <option value="unlisted">Unlisted</option>
+          <option value="public">Public</option>
+        </select>
+      </label>
+      <div id="pub-results"></div>
+      <button class="btn primary" id="pub-go" type="button">Post</button>
+    </div>
+  </dialog>
+
+  <!-- Login -->
+  <dialog id="login" class="dialog">
+    <form id="login-form" class="pub-body">
+      <h2>Password</h2>
+      <input class="input" type="password" name="password" autofocus>
+      <p class="error" id="login-error"></p>
+      <button class="btn primary">Sign in</button>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

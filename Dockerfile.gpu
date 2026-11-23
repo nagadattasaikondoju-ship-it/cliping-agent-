@@ -1,0 +1,27 @@
+# NVIDIA GPU image (CUDA 12 + cuDNN 9, what faster-whisper/CTranslate2 needs).
+# Needs the NVIDIA Container Toolkit on the host:  docker compose --profile gpu up
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-venv ffmpeg \
+      fonts-noto-color-emoji fonts-inter fontconfig \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY clipagent ./clipagent
+RUN pip install --no-cache-dir ".[all]"
+
+ENV CLIPAGENT_DATA_DIR=/data \
+    XDG_CACHE_HOME=/cache \
+    XDG_CONFIG_HOME=/config \
+    HF_HOME=/cache/huggingface \
+    PYTHONUNBUFFERED=1
+VOLUME ["/data", "/cache", "/config"]
+EXPOSE 8000
+
+ENTRYPOINT ["clipagent"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000", "--data-dir", "/data"]

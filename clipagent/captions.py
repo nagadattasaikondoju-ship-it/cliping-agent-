@@ -46,13 +46,43 @@ def chunk_words(words: list[Word], max_words: int, max_chars: int = 18,
     return chunks
 
 
+def caption_layout(settings: Settings, layout: str) -> tuple[int, int, int]:
+    """(ASS alignment, MarginV, y of the caption's top edge in output pixels)."""
+    H, size = settings.height, settings.caption_size
+    if layout == "split":  # sit on the seam between the two speakers
+        return 5, 0, H // 2 - int(size * 0.6)
+    margin_v = int(H * 0.26)
+    return 2, margin_v, H - margin_v - int(size * 1.2)
+
+
+def emoji_events(words: list[Word], clip_start: float, clip_end: float, settings: Settings,
+                 min_gap: float = 2.5, max_events: int = 8) -> list[tuple[float, float, str]]:
+    """(start, end, emoji) relative to the clip, one per caption phrase that has one."""
+    from .emoji import pick_emoji
+
+    rel = [Word(w.text, w.start - clip_start, w.end - clip_start) for w in words]
+    out: list[tuple[float, float, str]] = []
+    for chunk in chunk_words(rel, settings.caption_max_words):
+        emoji = pick_emoji(" ".join(w.text for w in chunk))
+        if not emoji:
+            continue
+        start = max(0.0, chunk[0].start)
+        if out and start - out[-1][0] < min_gap:
+            continue
+        end = min(clip_end - clip_start, max(chunk[-1].end + 0.3, start + 0.9), start + 2.0)
+        out.append((round(start, 2), round(end, 2), emoji))
+        if len(out) >= max_events:
+            break
+    return out
+
+
 def build_ass(words: list[Word], clip_start: float, clip_end: float, settings: Settings,
-              title: str = "", title_duration: float = 3.0) -> str:
+              title: str = "", title_duration: float = 3.0, layout: str = "crop") -> str:
     W, H = settings.width, settings.height
     base = _ass_color(settings.caption_color)
     hi = _ass_color(settings.caption_highlight)
     size = settings.caption_size
-    margin_v = int(H * 0.26)
+    align, margin_v, _ = caption_layout(settings, layout)
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -62,7 +92,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,{settings.caption_font},{size},{base},{base},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,2,60,60,{margin_v},1
+Style: Caption,{settings.caption_font},{size},{base},{base},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,7,3,{align},60,60,{margin_v},1
 Style: Title,{settings.caption_font},{int(size * 0.72)},&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,18,0,8,80,80,{int(H * 0.12)},1
 
 [Events]
