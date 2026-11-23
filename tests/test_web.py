@@ -119,3 +119,73 @@ def test_password_protection(tmp_path, monkeypatch):
     assert c.post("/api/login", json={"password": "nope"}).status_code == 401
     assert c.post("/api/login", json={"password": "s3cret"}).status_code == 200
     assert c.get("/api/jobs").status_code == 200  # cookie set
+
+
+# ---------------------------------------------------------------- public mode
+def _public_client(tmp_path, monkeypatch, **kw):
+    from clipagent.web.server import PublicLimits
+
+    monkeypatch.delenv("CLIPAGENT_WEB_TOKEN", raising=False)
+    limits = PublicLimits(enabled=True, **kw)
+    return TestClient(create_app(tmp_path / "pub", start_workers=False, limits=limits))
+
+
+def test_public_visitors_only_see_their_own_jobs(tmp_path, monkeypatch, sample_video):
+    alice = _public_client(tmp_path, monkeypatch, max_upload_mb=200, max_minutes=5)
+    with open(sample_video, "rb") as fh:
+        r = alice.post("/api/jobs", data={"settings": json.dumps({"num_clips": 50, "whisper_model": "large-v3"})},
+                       files={"file": ("a.mp4", fh, "video/mp4")})
+    assert r.status_code == 200, r.text
+    job_id = r.json()["id"]
+    assert "clipagent_visitor" in alice.cookies
+    store = alice.app.state.store
+    saved = store.get(job_id)
+    assert saved["settings"]["num_clips"] == 5 and saved["settings"]["whisper_model"] == "base"
+    assert saved["settings"]["max_source_minutes"] == 5
+    assert [j["id"] for j in alice.get("/api/jobs").json()] == [job_id]
+    assert "owner" not in alice.get(f"/api/jobs/{job_id}").json()
+
+    # Same server, different browser: sees nothing and can't reach Alice's job.
+    bob = TestClient(alice.app)
+    assert bob.get("/api/jobs").json() == []
+    for path in (f"/api/jobs/{job_id}", f"/api/jobs/{job_id}/transcript", f"/api/jobs/{job_id}/source"):
+        assert bob.get(path).status_code == 404, path
+    assert bob.delete(f"/api/jobs/{job_id}").status_code == 404
+    assert store.get(job_id)  # still there
+
+    # One video at a time per visitor.
+    with open(sample_video, "rb") as fh:
+        r = alice.post("/api/jobs", files={"file": ("b.mp4", fh, "video/mp4")})
+    assert r.status_code == 429
+
+    cfg = alice.get("/api/config").json()
+    assert cfg["public"] and cfg["limits"]["max_minutes"] == 5
+    assert alice.get("/api/defaults").json()["whisper_model"] == "base"
+
+
+def test_public_upload_limits(tmp_path, monkeypatch, sample_video):
+    small = _public_client(tmp_path, monkeypatch, max_upload_mb=0)
+    with open(sample_video, "rb") as fh:
+        r = small.post("/api/jobs", files={"file": ("a.mp4", fh, "video/mp4")})
+    assert r.status_code == 413 and "MB" in r.json()["detail"]
+    short = _public_client(tmp_path / "x", monkeypatch, max_upload_mb=500, max_minutes=1)
+    with open(sample_video, "rb") as fh:  # the sample is 90 seconds
+        r = short.post("/api/jobs", files={"file": ("a.mp4", fh, "video/mp4")})
+    assert r.status_code == 413 and "minutes" in r.json()["detail"]
+    assert short.app.state.store.list() == []  # rejected uploads are removed
+
+
+def test_cleanup_removes_old_finished_jobs(tmp_path):
+    from clipagent.web.jobs import JobStore
+
+    store = JobStore(tmp_path)
+    old = store.create("x", "old", {})
+    store.update(old["id"], status="done")
+    running = store.create("y", "running", {})
+    store.update(running["id"], status="running")
+    import time as _t
+
+    assert store.cleanup(max_age_seconds=3600) == 0
+    _t.sleep(0.05)
+    assert store.cleanup(max_age_seconds=0.01) == 1
+    assert [j["id"] for j in store.list()] == [running["id"]]

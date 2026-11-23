@@ -40,10 +40,11 @@ class JobStore:
             raise KeyError(job_id)
         return self.jobs_dir / job_id
 
-    def create(self, source: str, source_name: str, settings: dict) -> dict:
+    def create(self, source: str, source_name: str, settings: dict, owner: str = "") -> dict:
         job_id = uuid.uuid4().hex[:12]
         (self.dir(job_id) / ".work").mkdir(parents=True)
-        job = {"id": job_id, "created": time.time(), "updated": time.time(), "source": source,
+        job = {"id": job_id, "owner": owner, "created": time.time(), "updated": time.time(),
+               "source": source,
                "source_name": source_name, "status": "queued", "stage": "queued",
                "progress": 0.0, "error": "", "log": [], "settings": settings}
         self._write(job)
@@ -85,6 +86,16 @@ class JobStore:
 
     def delete(self, job_id: str) -> None:
         shutil.rmtree(self.dir(job_id), ignore_errors=True)
+
+    def cleanup(self, max_age_seconds: float) -> int:
+        """Delete finished jobs not touched for `max_age_seconds`. Returns how many."""
+        cutoff = time.time() - max_age_seconds
+        removed = 0
+        for job in self.list():
+            if job["status"] not in ("queued", "running") and job.get("updated", 0) < cutoff:
+                self.delete(job["id"])
+                removed += 1
+        return removed
 
     # --------------------------------------------------------------- manifest
     def manifest_path(self, job_id: str) -> Path:

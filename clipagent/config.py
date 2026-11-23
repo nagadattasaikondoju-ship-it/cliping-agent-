@@ -14,6 +14,9 @@ class Settings:
     target_duration: float = 35.0
     max_overlap: float = 0.25  # max fraction of overlap allowed between chosen clips
 
+    # Refuse sources longer than this many minutes (0 = no limit). Used by the public studio.
+    max_source_minutes: float = 0
+
     # Downloading (yt-dlp). YouTube often requires cookies when run from a server.
     cookies_file: str | None = None
     cookies_from_browser: str | None = None  # e.g. "chrome", "firefox"
