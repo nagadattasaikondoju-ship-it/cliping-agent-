@@ -83,7 +83,7 @@ def test_provider_resolution(monkeypatch):
     s = Settings()
     assert resolve_provider(s)[0] is None
     monkeypatch.setenv("GEMINI_API_KEY", "g")
-    assert resolve_provider(s) == ("gemini", "gemini-flash-latest")
+    assert resolve_provider(s) == ("gemini", "auto")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-pro")
     assert resolve_provider(s) == ("gemini", "gemini-2.5-pro")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
@@ -95,12 +95,21 @@ def test_provider_resolution(monkeypatch):
 
 
 class _FakeModels:
-    def __init__(self, payload=None, error=None, calls=None):
+    def __init__(self, payload=None, error=None, calls=None, available=None, busy=()):
         self.payload, self.error, self.calls = payload, error, calls
+        self.available, self.busy = available, set(busy)
+
+    def list(self):
+        if self.available is None:
+            raise RuntimeError("listing not supported")
+        return [SimpleNamespace(name=f"models/{n}") for n in self.available]
 
     def generate_content(self, **kwargs):
         if self.calls is not None:
             self.calls.append(kwargs)
+        if kwargs["model"] in self.busy:
+            from google.genai import errors
+            raise errors.ServerError(503, {"error": {"message": "high demand"}})
         if self.error:
             raise self.error
         return SimpleNamespace(text=json.dumps(self.payload))
@@ -111,7 +120,7 @@ def _fake_genai(monkeypatch, **kw):
 
     seen = {}
 
-    def client(api_key=None):
+    def client(api_key=None, http_options=None):
         seen["api_key"] = api_key
         return SimpleNamespace(models=_FakeModels(**kw))
 
@@ -131,7 +140,7 @@ def test_gemini_provider(monkeypatch):
     assert seen["api_key"] == "gem-key"
     assert clips[0].title == "Gemini pick" and clips[0].llm_score == 88
     req = calls[0]
-    assert req["model"] == "gemini-flash-latest"
+    assert req["model"] == "gemini-2.5-flash"  # listing failed -> safe fallback
     cfg = req["config"]
     assert cfg.response_mime_type == "application/json"
     assert "additionalProperties" not in json.dumps(cfg.response_json_schema)
@@ -149,3 +158,20 @@ def test_gemini_bad_model_falls_back(monkeypatch):
     clips = find_clips(make_transcript(SENTENCES * 2), None, s, log=logs.append)
     assert len(clips) == 2 and all(c.llm_score is None for c in clips)
     assert any("not found" in line for line in logs)
+
+
+def test_gemini_auto_picks_newest_flash_and_skips_busy_models(monkeypatch):
+    pytest.importorskip("google.genai")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr("clipagent.llm.time.sleep", lambda s: None)
+    calls = []
+    available = ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.10-flash",
+                 "gemini-3.6-flash", "gemini-4-neon", "gemini-3.1-flash-image"]
+    _fake_genai(monkeypatch, payload={"clips": [_clip(4.0, 22.5, 80, "ok")]}, calls=calls,
+                available=available, busy={"gemini-3.10-flash"})
+    s = Settings(num_clips=1, min_duration=8, max_duration=25, target_duration=15)
+    clips = find_clips(make_transcript(SENTENCES * 2), None, s, log=lambda *_: None)
+    tried = [c["model"] for c in calls]
+    # 3.10 > 3.8 numerically; it is busy, so it is retried once and then 3.8 is used.
+    assert tried == ["gemini-3.10-flash", "gemini-3.10-flash", "gemini-3.8-flash"]
+    assert clips[0].title == "ok"

@@ -1,8 +1,8 @@
 """B-roll: short stock-footage cutaways over the speaker at moments that mention
 something visual ("money", "the ocean", "a rocket launch").
 
-Footage comes from a local folder (file names are matched against the query)
-and/or the Pexels API (free key: PEXELS_API_KEY). Moments come from Claude
+Footage comes from a local folder (file names are matched against the query),
+then Pexels (PEXELS_API_KEY) and Pixabay (PIXABAY_API_KEY); both keys are free. Moments come from Claude
 (it suggests a time and a search query per clip) or, without Claude, from
 concrete nouns in the transcript.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -116,47 +117,112 @@ def search_pexels(query: str, api_key: str, out_w: int = 1080, out_h: int = 1920
     return (best[1], best[2]) if best else None
 
 
-def fetch(cut: BRollCut, broll_dir: str | None, api_key: str | None, log=print) -> BRollCut | None:
+def search_pixabay(query: str, api_key: str, out_h: int = 1920, max_bytes: int = 60_000_000,
+                   opener=urllib.request.urlopen) -> tuple[str, str] | None:
+    """(download URL, credit) of the best clip on Pixabay for `query`, or None.
+
+    Pixabay is mostly landscape, which we crop to 9:16, so prefer portrait clips,
+    then ones tall enough to crop without blurring, without downloading huge 4K files.
+    """
+    url = "https://pixabay.com/api/videos/?" + urllib.parse.urlencode(
+        {"key": api_key, "q": query[:100], "per_page": 10, "safesearch": "true"})
+    req = urllib.request.Request(url, headers={"User-Agent": "clipagent/0.2"})
+    with opener(req, timeout=20) as resp:
+        data = json.loads(resp.read())
+    best = None
+    for rank, hit in enumerate(data.get("hits", [])):
+        if hit.get("duration", 0) < 3:
+            continue
+        for variant in (hit.get("videos") or {}).values():
+            w, h = variant.get("width") or 0, variant.get("height") or 0
+            if not variant.get("url") or not h or (variant.get("size") or 0) > max_bytes:
+                continue
+            portrait = h >= w
+            # Landscape is cropped to a strip h*9/16 wide, so its height is what matters.
+            sharp = h >= out_h * (0.5 if portrait else 0.75)
+            score = (not portrait, not sharp, rank, abs(h - out_h))
+            if best is None or score < best[0]:
+                best = (score, variant["url"], f"{hit.get('user', 'Pixabay')} / Pixabay")
+    return (best[1], best[2]) if best else None
+
+
+SOURCES = {"pexels": ("PEXELS_API_KEY", search_pexels), "pixabay": ("PIXABAY_API_KEY", search_pixabay)}
+
+
+def configured_sources() -> list[str]:
+    return [name for name, (env, _) in SOURCES.items() if os.environ.get(env)]
+
+
+def fetch(cut: BRollCut, broll_dir: str | None, sources: list[str], log=print) -> BRollCut | None:
+    """Find footage for `cut`: your folder first, then each stock site in turn."""
     if broll_dir:
         local = find_local(cut.query, broll_dir)
         if local:
             cut.path, cut.credit = str(local), "local"
             return cut
-    if not api_key:
+    if not sources:
         return None
     cache = CACHE_DIR / "broll"
     cache.mkdir(parents=True, exist_ok=True)
     target = cache / f"{_slug(cut.query)}.mp4"
     meta = target.with_suffix(".json")
     if target.exists() and meta.exists():
-        cut.path, cut.credit = str(target), json.loads(meta.read_text()).get("credit", "Pexels")
+        cut.path, cut.credit = str(target), json.loads(meta.read_text()).get("credit", "")
         return cut
-    try:
-        hit = search_pexels(cut.query, api_key)
+    for name in sources:
+        env, search = SOURCES[name]
+        try:
+            hit = search(cut.query, os.environ[env])
+        except urllib.error.HTTPError as exc:
+            hint = " - check the key" if exc.code in (400, 401, 403) else ""
+            log(f"  b-roll: {name} returned HTTP {exc.code} for '{cut.query}'{hint}")
+            continue
+        except Exception as exc:
+            log(f"  b-roll: {name} lookup failed for '{cut.query}' ({exc.__class__.__name__})")
+            continue
         if not hit:
-            log(f"  b-roll: nothing on Pexels for '{cut.query}'")
-            return None
+            log(f"  b-roll: nothing on {name} for '{cut.query}'")
+            continue
         link, credit = hit
-        req = urllib.request.Request(link, headers={"User-Agent": "clipagent/0.2"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            target.write_bytes(resp.read())
+        try:
+            req = urllib.request.Request(link, headers={"User-Agent": "clipagent/0.2"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                target.write_bytes(resp.read())
+        except Exception as exc:
+            log(f"  b-roll: download from {name} failed ({exc.__class__.__name__})")
+            target.unlink(missing_ok=True)
+            continue
         meta.write_text(json.dumps({"query": cut.query, "credit": credit, "url": link}))
         cut.path, cut.credit = str(target), credit
         return cut
+    return None
+
+
+def check_key(name: str, opener=urllib.request.urlopen) -> tuple[bool, str]:
+    """Make one real search to see whether a stock-footage key works."""
+    env, search = SOURCES[name]
+    key = os.environ.get(env)
+    if not key:
+        return False, f"{env} not set"
+    try:
+        hit = search("city", key, opener=opener)
+        return True, "key works" if hit else "key works (no result for test search)"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}: the key was rejected" if exc.code in (400, 401, 403) \
+            else f"HTTP {exc.code}"
     except Exception as exc:
-        log(f"  b-roll: Pexels lookup failed for '{cut.query}' ({exc.__class__.__name__})")
-        return None
+        return False, f"could not connect ({exc.__class__.__name__})"
 
 
 def prepare_broll(clip: Clip, transcript: Transcript, max_cuts: int, duration: float,
                   broll_dir: str | None = None, log=print) -> list[BRollCut]:
-    api_key = os.environ.get("PEXELS_API_KEY")
-    if not broll_dir and not api_key:
-        log("  b-roll: skipped (set PEXELS_API_KEY or pass --broll-dir)")
+    sources = configured_sources()
+    if not broll_dir and not sources:
+        log("  b-roll: skipped (set PEXELS_API_KEY or PIXABAY_API_KEY, or pass --broll-dir)")
         return []
     cuts = []
     for cut in plan_cuts(clip, transcript, max_cuts, duration):
-        got = fetch(cut, broll_dir, api_key, log=log)
+        got = fetch(cut, broll_dir, sources, log=log)
         if got:
             cuts.append(got)
     return cuts

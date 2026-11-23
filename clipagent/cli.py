@@ -55,7 +55,7 @@ def add_run_args(p: argparse.ArgumentParser) -> None:
 
     b = p.add_argument_group("b-roll")
     b.add_argument("--broll", action="store_true",
-                   help="Cut away to stock footage (needs PEXELS_API_KEY or --broll-dir)")
+                   help="Cut away to stock footage (needs PIXABAY_API_KEY, PEXELS_API_KEY or --broll-dir)")
     b.add_argument("--broll-dir", help="Folder of your own clips; file names are matched")
     b.add_argument("--broll-max", type=int, default=d.broll_max, help="Cutaways per clip")
 
@@ -125,7 +125,7 @@ def cmd_run(args) -> int:
 def cmd_doctor(args) -> int:
     from .doctor import print_report, run_checks
 
-    checks = run_checks(args.whisper_model)
+    checks = run_checks(args.whisper_model, online=args.online)
     if args.json:
         print(json.dumps([c.to_dict() for c in checks], indent=2))
         return 0
@@ -159,6 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("doctor", help="Check that everything needed is installed and configured")
     d.add_argument("--whisper-model", default=Settings().whisper_model)
     d.add_argument("--json", action="store_true")
+    d.add_argument("--online", action="store_true",
+                   help="Also test your API keys with real (free) requests")
 
     s = sub.add_parser("setup", help="Download the Whisper and face models")
     s.add_argument("--whisper-model", default=Settings().whisper_model)

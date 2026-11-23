@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 
 from .config import Settings
 from .highlights import split_sentences
@@ -105,7 +107,9 @@ def _clamp(x: float) -> float:
     return max(0.0, min(100.0, float(x)))
 
 
-DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "gemini": "gemini-flash-latest"}
+# "auto" for Gemini = the newest Flash model this key can use (see _gemini_candidates).
+DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "gemini": "auto"}
+GEMINI_FALLBACK = "gemini-2.5-flash"
 
 
 class LLMUnavailable(Exception):
@@ -179,7 +183,29 @@ def _gemini_schema(schema):
     return schema
 
 
-def _ask_gemini(model: str, system: str, user: str, settings: Settings) -> str:
+def _gemini_version(name: str) -> tuple[int, ...] | None:
+    """(3, 8) for 'gemini-3.8-flash'; None for previews, lite, image or other variants."""
+    m = re.fullmatch(r"gemini-(\d+(?:\.\d+)?)-flash", name)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def _gemini_candidates(client, wanted: str) -> list[str]:
+    """Models to try in order. An explicit model is used as-is; "auto" means the
+    stable Flash models this key can call, newest first."""
+    if wanted != "auto":
+        return [wanted]
+    try:
+        names = [m.name.split("/", 1)[-1] for m in client.models.list()]
+    except Exception:
+        names = []
+    flash = sorted((n for n in names if _gemini_version(n)), key=_gemini_version, reverse=True)
+    if GEMINI_FALLBACK not in flash:
+        flash.append(GEMINI_FALLBACK)
+    return flash[:4]
+
+
+def _ask_gemini(model: str, system: str, user: str, settings: Settings, log=print,
+                retry_wait: float = 4.0) -> str:
     try:
         from google import genai
         from google.genai import errors, types
@@ -187,33 +213,40 @@ def _ask_gemini(model: str, system: str, user: str, settings: Settings) -> str:
         raise LLMUnavailable("google-genai is not installed (pip install google-genai)")
 
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    try:
-        client = genai.Client(api_key=key)
-        response = client.models.generate_content(
-            model=model,
-            contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                response_mime_type="application/json",
-                response_json_schema=_gemini_schema(CLIP_SCHEMA),
-                max_output_tokens=32000,
-            ),
-        )
-    except errors.APIError as exc:
-        if exc.code in (400, 401, 403) and "key" in str(exc).lower():
-            raise LLMUnavailable("the Gemini API key was rejected")
-        if exc.code == 404:
-            raise LLMUnavailable(f"Gemini model '{model}' not found - set GEMINI_MODEL or "
-                                 "--llm-model to a model your key can use")
-        if exc.code == 429:
-            raise LLMUnavailable("Gemini rate limit or quota hit")
-        raise LLMUnavailable(f"Gemini API error {exc.code}")
-    except Exception as exc:  # network errors
-        raise LLMUnavailable(f"could not reach the Gemini API ({exc.__class__.__name__})")
-    text = response.text or ""
-    if not text:
-        raise LLMUnavailable("Gemini returned an empty response (blocked or truncated)")
-    return text
+    client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=300_000))
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        response_mime_type="application/json",
+        response_json_schema=_gemini_schema(CLIP_SCHEMA),
+        max_output_tokens=32000,
+    )
+    last = "no Gemini model available"
+    for name in _gemini_candidates(client, model):
+        for attempt in range(2):
+            try:
+                log(f"  trying {name}...")
+                response = client.models.generate_content(model=name, contents=user, config=config)
+                text = response.text or ""
+                if text:
+                    return text
+                last = f"{name} returned an empty response (blocked or truncated)"
+                break
+            except errors.APIError as exc:
+                if exc.code in (400, 401, 403) and "key" in str(exc).lower():
+                    raise LLMUnavailable("the Gemini API key was rejected")
+                if exc.code == 404:
+                    last = f"Gemini model '{name}' not found - set GEMINI_MODEL to one your key can use"
+                    break
+                if exc.code in (429, 500, 503, 504):  # busy or quota: retry, then try an older model
+                    last = f"{name} is busy or over quota ({exc.code})"
+                    if attempt == 0:
+                        time.sleep(retry_wait)
+                    continue
+                raise LLMUnavailable(f"Gemini API error {exc.code}")
+            except Exception as exc:  # network errors, timeouts
+                last = f"could not reach Gemini ({exc.__class__.__name__})"
+                break
+    raise LLMUnavailable(last)
 
 
 def llm_highlights(transcript: Transcript, settings: Settings, log=print) -> list[Clip]:
@@ -232,16 +265,19 @@ def llm_highlights(transcript: Transcript, settings: Settings, log=print) -> lis
         f"<transcript>\n{format_transcript(transcript)}\n</transcript>"
     )
 
-    log(f"Asking {model} to find highlights...")
-    ask = _ask_claude if provider == "anthropic" else _ask_gemini
+    label = "the newest Gemini Flash model" if model == "auto" else model
+    log(f"Asking {label} to find highlights...")
     try:
-        text = ask(model, system, user, settings)
+        if provider == "anthropic":
+            text = _ask_claude(model, system, user, settings)
+        else:
+            text = _ask_gemini(model, system, user, settings, log=log)
         data = json.loads(text)
     except LLMUnavailable as exc:
         log(f"{exc} - using heuristic scoring only.")
         return []
     except json.JSONDecodeError:
-        log(f"Could not parse {model}'s response - using heuristic scoring only.")
+        log(f"Could not parse {label}'s response - using heuristic scoring only.")
         return []
 
     clips: list[Clip] = []
@@ -269,5 +305,5 @@ def llm_highlights(transcript: Transcript, settings: Settings, log=print) -> lis
             ))
         except (KeyError, TypeError, ValueError):
             continue  # skip a malformed item rather than losing the whole answer
-    log(f"{model} proposed {len(clips)} clips.")
+    log(f"{label} proposed {len(clips)} clips.")
     return clips

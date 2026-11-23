@@ -21,7 +21,7 @@ long video / URL ──► transcribe (Whisper, word timestamps)
 | **Blur layout** | Screen recordings, slides and other footage without faces keep the whole frame, placed over a blurred copy of itself. |
 | **Captions** | 1–3 words at a time. The word being spoken is highlighted and pops in. Font, size, color and case are all adjustable, and the hook title shows for the first 3 seconds. |
 | **Emoji** | An emoji pops above the caption on visual words ("money" 💰, "fire" 🔥, "love" ❤️, …). |
-| **B-roll** | Short stock-footage cutaways from Pexels (free API key), or from your own folder of clips. |
+| **B-roll** | Short stock-footage cutaways from your own folder of clips, Pexels or Pixabay (both free API keys). |
 | **Web UI + editor** | Upload a file or paste a link, watch progress, browse clips by score, trim on the transcript, change title, layout and styling, re-render and download. |
 
 ## What you need
@@ -31,11 +31,11 @@ long video / URL ──► transcribe (Whisper, word timestamps)
 | Python 3.10+ and **ffmpeg** | yes | the installer handles both, or use Docker |
 | **An AI key**: `ANTHROPIC_API_KEY` *or* `GEMINI_API_KEY` | strongly recommended | Claude: [console.anthropic.com](https://console.anthropic.com) · Gemini: [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Without one, clip picks come from heuristics only. If both are set, Claude is used unless you pass `--llm-provider gemini`. |
 | An NVIDIA GPU | optional | Transcription runs 5–10× faster. Use `install.sh --gpu` or the GPU Docker image. |
-| `PEXELS_API_KEY` | only for stock B-roll | free at [pexels.com/api](https://www.pexels.com/api/). `--broll-dir` works without it. |
+| `PIXABAY_API_KEY` or `PEXELS_API_KEY` | only for stock B-roll | Free at [pixabay.com/api/docs](https://pixabay.com/api/docs/) (key shown right after signup) or [pexels.com/api](https://www.pexels.com/api/). With both set, Pexels is tried first and Pixabay fills in. `--broll-dir` works without either. |
 | YouTube cookies | only for YouTube links on servers | `--cookies-from-browser chrome`, or `YTDLP_COOKIES` |
 | Internet on first run | yes | Downloads the Whisper model (`small` ≈ 480 MB) and the face model (230 KB) once, then caches them. |
 
-Run `clipagent doctor` at any time to see what's set up and what's missing.
+Run `clipagent doctor` at any time to see what's set up and what's missing. Add `--online` to test each API key with a real (free) request: if a key "doesn't work", this shows the error.
 
 ## Install
 
@@ -88,7 +88,7 @@ The landing page at `/` is built for search and sharing. It has a title, descrip
 ```bash
 clipagent podcast.mp4                                   # 5 clips into ./clips
 clipagent "https://youtu.be/..." -n 8 --cookies-from-browser chrome
-clipagent talk.mp4 --emoji --broll                      # emoji + Pexels B-roll
+clipagent talk.mp4 --emoji --broll                      # emoji + stock B-roll (Pexels/Pixabay)
 clipagent talk.mp4 --broll-dir ~/stock                  # B-roll from your own clips
 clipagent interview.mp4 --layout split                  # force split-screen
 clipagent talk.mp4 --min 20 --max 45 --highlight-color FFD400
@@ -117,7 +117,7 @@ clips = run_pipeline("talk.mp4", "out", Settings(num_clips=3, emoji=True))
 
 ## How it works
 
-- `highlights.py` scores every sentence-aligned window and keeps the best set that doesn't overlap. `llm.py` sends the transcript to Claude (`claude-opus-5-5`) or Gemini (`gemini-flash-latest`, override with `GEMINI_MODEL`), asking for structured JSON output. The model's picks are snapped to word boundaries, re-scored by the heuristics, and the two scores are blended 60/40.
+- `highlights.py` scores every sentence-aligned window and keeps the best set that doesn't overlap. `llm.py` sends the transcript to Claude (`claude-opus-5-5`) or Gemini (by default the newest Flash model your key can use, falling back to older ones when a model is busy; pin one with `GEMINI_MODEL`), asking for structured JSON output. The model's picks are snapped to word boundaries, re-scored by the heuristics, and the two scores are blended 60/40.
 - `faces.py` decodes the clip once at 640 px. It runs YuNet face detection 6×/s, links detections into tracks, and measures mouth motion minus eye-area motion (which cancels head movement) for each face. Only moments with speech count. A hysteresis step picks the speaker so the camera doesn't flicker. Because the analysis is offline, each cut is moved back to the moment the new speaker started, so there is no lag.
 - `reframe.py` turns the speaker track into a smooth virtual camera: it stays still for small movements, eases toward the subject when it moves, and hard-cuts on a speaker change. It can also decide on the split-screen layout. The result is compiled into an ffmpeg `crop` expression.
 - `render.py` stacks the layers in this order: reframed video → B-roll → captions and title (libass) → emoji. Audio is normalized to −14 LUFS.
@@ -130,7 +130,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The 32 tests cover scoring, captions, emoji, the camera path, speaker selection, split detection, B-roll planning and the Pexels lookup, Claude and Gemini (against fake clients), the web API (a full job, edits, re-render, password protection), and end-to-end renders.
+The 36 tests cover scoring, captions, emoji, the camera path, speaker selection, split detection, B-roll planning and the Pexels and Pixabay lookups, Claude and Gemini (against fake clients), the web API (a full job, edits, re-render, password protection), and end-to-end renders.
 
 `scripts/make_two_speaker_video.py` builds a two-person test video with a known speaker schedule. On it, speaker detection agrees with the ground truth on 98.8% of frames.
 

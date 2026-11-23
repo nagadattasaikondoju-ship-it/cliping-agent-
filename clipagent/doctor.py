@@ -72,7 +72,25 @@ def gpu_status() -> tuple[bool, str]:
     return False, "no CUDA GPU - transcription runs on CPU (about real time with 'small')"
 
 
-def run_checks(whisper_model: str = "small") -> list[Check]:
+def check_ai_key(provider: str) -> tuple[bool, str]:
+    """One cheap real request to see whether the AI key is accepted."""
+    try:
+        if provider == "gemini":
+            from google import genai
+
+            client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+            n = sum(1 for _ in client.models.list())
+            return True, f"key works ({n} models available)"
+        import anthropic
+
+        anthropic.Anthropic().models.list(limit=1)
+        return True, "key works"
+    except Exception as exc:
+        msg = str(exc).split("\n")[0][:120]
+        return False, f"key check failed: {msg}"
+
+
+def run_checks(whisper_model: str = "small", online: bool = False) -> list[Check]:
     checks: list[Check] = []
     v = sys.version_info
     checks.append(Check("Python", OK if v >= (3, 10) else FAIL, f"{v.major}.{v.minor}.{v.micro}",
@@ -95,7 +113,13 @@ def run_checks(whisper_model: str = "small") -> list[Check]:
     provider, model = resolve_provider(Settings())
     if provider:
         name = "Claude" if provider == "anthropic" else "Gemini"
-        checks.append(Check("AI provider", OK, f"{name} ({model})"))
+        label = "newest Flash model" if model == "auto" else model
+        if online:
+            ok, detail = check_ai_key(provider)
+            checks.append(Check("AI provider", OK if ok else FAIL, f"{name} ({label}): {detail}",
+                                "" if ok else "Check the key in .env"))
+        else:
+            checks.append(Check("AI provider", OK, f"{name} ({label})"))
     else:
         checks.append(Check("AI provider", WARN,
                             "no API key - clip picks fall back to the rule-based scorer",
@@ -124,11 +148,20 @@ def run_checks(whisper_model: str = "small") -> list[Check]:
                         "" if backend else "Install the Noto Color Emoji font or allow internet "
                         "access to cdn.jsdelivr.net (Twemoji)"))
 
-    if os.environ.get("PEXELS_API_KEY"):
-        checks.append(Check("B-roll (Pexels)", OK, "PEXELS_API_KEY is set"))
-    else:
-        checks.append(Check("B-roll (Pexels)", WARN, "PEXELS_API_KEY not set - only --broll-dir works",
-                            "Free key at https://www.pexels.com/api/"))
+    from .broll import SOURCES, check_key, configured_sources
+
+    sources = configured_sources()
+    if not sources:
+        checks.append(Check("B-roll", WARN, "no stock-footage key - only --broll-dir works",
+                            "Free key from https://pixabay.com/api/docs/ (PIXABAY_API_KEY) or "
+                            "https://www.pexels.com/api/ (PEXELS_API_KEY)"))
+    for name in sources:
+        if online:
+            ok, detail = check_key(name)
+            checks.append(Check(f"B-roll ({name})", OK if ok else FAIL, detail,
+                                "" if ok else f"Check {SOURCES[name][0]} in .env"))
+        else:
+            checks.append(Check(f"B-roll ({name})", OK, f"{SOURCES[name][0]} is set"))
 
     if os.environ.get("YTDLP_COOKIES") or os.environ.get("YTDLP_COOKIES_FROM_BROWSER"):
         checks.append(Check("YouTube cookies", OK, "configured"))

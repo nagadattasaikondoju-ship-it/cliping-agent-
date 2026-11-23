@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from clipagent.broll import find_local, plan_cuts, search_pexels
+from clipagent import broll
+from clipagent.broll import BRollCut, check_key, fetch, find_local, plan_cuts, search_pexels, search_pixabay
 from clipagent.captions import emoji_events
 from clipagent.config import Settings
 from clipagent.emoji import pick_emoji, render_emoji
@@ -124,6 +125,81 @@ def test_search_pexels_picks_portrait_file():
     link, credit = search_pexels("cash", "KEY", opener=opener)
     assert link == "hd-portrait" and credit == "Ann / Pexels"
     assert seen["auth"] == "KEY" and "orientation=portrait" in seen["url"]
+
+
+class _Resp:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode()
+
+
+def test_search_pixabay_prefers_portrait_then_sharp():
+    payload = {"hits": [
+        {"duration": 12, "user": "Bo", "videos": {
+            "large": {"url": "4k", "width": 3840, "height": 2160, "size": 90_000_000},  # too big
+            "medium": {"url": "hd", "width": 1920, "height": 1080, "size": 9_000_000},
+            "small": {"url": "sd", "width": 1280, "height": 720, "size": 4_000_000}}},
+        {"duration": 2, "user": "Short", "videos": {  # too short
+            "medium": {"url": "short-portrait", "width": 1080, "height": 1920, "size": 1}}},
+    ]}
+    seen = {}
+
+    def opener(req, timeout):
+        seen["url"] = req.full_url
+        return _Resp(payload)
+
+    assert search_pixabay("cash", "K", opener=opener) == ("hd", "Bo / Pixabay")
+    assert "key=K" in seen["url"] and "q=cash" in seen["url"]
+    payload["hits"].append({"duration": 9, "user": "Vee", "videos": {
+        "medium": {"url": "portrait", "width": 1080, "height": 1920, "size": 5_000_000}}})
+    assert search_pixabay("cash", "K", opener=opener)[0] == "portrait"
+
+
+def test_fetch_falls_back_to_pixabay_when_pexels_rejects_key(tmp_path, monkeypatch):
+    import urllib.error
+
+    monkeypatch.setattr(broll, "CACHE_DIR", tmp_path)
+    monkeypatch.setenv("PEXELS_API_KEY", "bad")
+    monkeypatch.setenv("PIXABAY_API_KEY", "good")
+
+    def pexels(*a, **k):
+        raise urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
+
+    monkeypatch.setitem(broll.SOURCES, "pexels", ("PEXELS_API_KEY", pexels))
+    monkeypatch.setitem(broll.SOURCES, "pixabay", ("PIXABAY_API_KEY", lambda q, k, **kw: ("http://x/v.mp4", "Bo / Pixabay")))
+
+    class Dl:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b"video-bytes"
+
+    monkeypatch.setattr(broll.urllib.request, "urlopen", lambda req, timeout: Dl())
+    logs = []
+    cut = fetch(BRollCut(time=5, duration=2, query="cash"), None, ["pexels", "pixabay"], log=logs.append)
+    assert cut and cut.credit == "Bo / Pixabay" and (tmp_path / "broll" / "cash.mp4").read_bytes() == b"video-bytes"
+    assert any("HTTP 401" in l and "check the key" in l for l in logs)
+
+
+def test_check_key_reports_rejection(monkeypatch):
+    import urllib.error
+
+    monkeypatch.setenv("PIXABAY_API_KEY", "nope")
+
+    def opener(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
+
+    ok, detail = check_key("pixabay", opener=opener)
+    assert not ok and "rejected" in detail
+    monkeypatch.delenv("PIXABAY_API_KEY")
+    assert check_key("pixabay") == (False, "PIXABAY_API_KEY not set")
 
 
 # ---------------------------------------------------------------- end to end
