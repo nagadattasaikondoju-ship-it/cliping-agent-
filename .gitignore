@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+clips/
+.work/
+*.mp4
+*.wav
+.pytest_cache/
