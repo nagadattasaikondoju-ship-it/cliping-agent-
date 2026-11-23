@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+clips/
+.work/
+*.mp4
+*.wav
+.pytest_cache/
+clipagent-data/
+clipagent-config/
+.env
+
+site/
+.vercel/

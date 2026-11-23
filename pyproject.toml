@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clipagent"
+version = "0.2.0"
+description = "AI clipping agent: long videos in, captioned 9:16 viral clips out."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python-headless>=4.8",
+  "faster-whisper>=1.0",
+  "anthropic>=0.80",
+  "google-genai>=1.0",
+  "yt-dlp>=2024.1.1",
+  "pillow>=10",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+all = ["clipagent[web]"]
+dev = ["clipagent[all]", "pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+clipagent = "clipagent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clipagent*"]
+
+[tool.setuptools.package-data]
+"clipagent.web" = ["static/*"]

@@ -1,0 +1,9 @@
+.git
+.venv
+clips
+clipagent-data
+clipagent-config
+**/__pycache__
+**/.pytest_cache
+*.mp4
+.env
