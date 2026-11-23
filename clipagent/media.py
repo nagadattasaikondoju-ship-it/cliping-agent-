@@ -74,7 +74,7 @@ def is_url(source: str) -> bool:
 
 
 def download(url: str, out_dir: Path, cookies_file: str | None = None,
-             cookies_from_browser: str | None = None) -> Path:
+             cookies_from_browser: str | None = None, max_minutes: float = 0) -> Path:
     """Download a video (YouTube, Vimeo, X, Twitch VODs, ...) with yt-dlp."""
     try:
         import yt_dlp  # type: ignore
@@ -89,6 +89,10 @@ def download(url: str, out_dir: Path, cookies_file: str | None = None,
         "quiet": True,
         "noprogress": True,
     }
+    if max_minutes:
+        from yt_dlp.utils import match_filter_func
+
+        opts["match_filter"] = match_filter_func(f"duration <= {int(max_minutes * 60)}")
     if cookies_file:
         opts["cookiefile"] = cookies_file
     if cookies_from_browser:
@@ -99,6 +103,9 @@ def download(url: str, out_dir: Path, cookies_file: str | None = None,
     if not path.exists():
         candidates = sorted(out_dir.glob("source.*"))
         if not candidates:
+            if max_minutes:
+                raise MediaError(f"Nothing was downloaded. The video may be longer than the "
+                                 f"{max_minutes:g}-minute limit.")
             raise MediaError(f"Download finished but no file found for {url}")
         path = candidates[0]
     return path

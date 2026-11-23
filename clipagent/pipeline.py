@@ -103,13 +103,17 @@ class Project:
         self.progress("download", 0.0)
         if is_url(source):
             self.log(f"Downloading {source} ...")
-            self.video = download(source, self.work, s.cookies_file, s.cookies_from_browser)
+            self.video = download(source, self.work, s.cookies_file, s.cookies_from_browser,
+                                  max_minutes=s.max_source_minutes)
         else:
             self.video = Path(source).resolve()
             if not self.video.exists():
                 raise FileNotFoundError(source)
         self.info = probe(self.video)
         i = self.info
+        if s.max_source_minutes and i.duration > s.max_source_minutes * 60:
+            raise RuntimeError(f"This video is {i.duration / 60:.0f} minutes long; the limit here "
+                               f"is {s.max_source_minutes:g} minutes.")
         self.log(f"Source: {self.video.name} {i.width}x{i.height} {i.duration:.1f}s @ {i.fps:.2f}fps")
 
         self.progress("transcribe", 0.1)

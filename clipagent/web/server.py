@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import html
+import threading
 import json
 import os
 import re
@@ -21,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
-from ..media import is_url
+from ..media import is_url, probe
 from .jobs import JobStore, Workers, new_clip_dict
 
 STATIC = Path(__file__).parent / "static"
@@ -56,12 +57,50 @@ def _clean_settings(raw: dict) -> dict:
     return out
 
 
-def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = True) -> FastAPI:
+@dataclasses.dataclass
+class PublicLimits:
+    """Limits for a studio that anyone on the internet can use (CLIPAGENT_PUBLIC=1)."""
+
+    enabled: bool = False
+    max_upload_mb: int = 500
+    max_minutes: float = 30
+    max_clips: int = 5
+    job_ttl_hours: float = 24
+    max_queue: int = 8
+    whisper_models: tuple = ("base", "small")
+
+    @classmethod
+    def from_env(cls) -> "PublicLimits":
+        e = os.environ.get
+        if e("CLIPAGENT_PUBLIC", "").lower() not in ("1", "true", "yes"):
+            return cls()
+        return cls(enabled=True,
+                   max_upload_mb=int(e("CLIPAGENT_MAX_UPLOAD_MB", 500)),
+                   max_minutes=float(e("CLIPAGENT_MAX_MINUTES", 30)),
+                   max_clips=int(e("CLIPAGENT_MAX_CLIPS", 5)),
+                   job_ttl_hours=float(e("CLIPAGENT_JOB_TTL_HOURS", 24)),
+                   max_queue=int(e("CLIPAGENT_MAX_QUEUE", 8)))
+
+
+VISITOR_COOKIE = "clipagent_visitor"
+
+
+def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = True,
+               limits: PublicLimits | None = None) -> FastAPI:
+    limits = limits or PublicLimits.from_env()
     store = JobStore(data_dir)
     workers = Workers(store) if start_workers else None
     if workers:
         for job_id in store.recover():
             workers.process(job_id)
+    if limits.enabled and start_workers:
+        def janitor() -> None:
+            while True:
+                removed = store.cleanup(limits.job_ttl_hours * 3600)
+                if removed:
+                    print(f"cleanup: removed {removed} expired job(s)")
+                time.sleep(1800)
+        threading.Thread(target=janitor, daemon=True).start()
     token = os.environ.get("CLIPAGENT_WEB_TOKEN", "")
     app = FastAPI(title="clipagent", docs_url="/api/docs")
     app.state.store, app.state.workers = store, workers
@@ -76,13 +115,30 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
                 request.headers.get("authorization", "").removeprefix("Bearer ")
             if not secrets.compare_digest(given, token):
                 return JSONResponse({"detail": "login required"}, status_code=401)
-        return await call_next(request)
+        # Public mode: an anonymous, random per-browser id. Visitors only ever
+        # see the jobs they created.
+        visitor = request.cookies.get(VISITOR_COOKIE, "")
+        fresh = not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", visitor)
+        if fresh:
+            visitor = secrets.token_urlsafe(24)
+        request.state.visitor = visitor
+        response = await call_next(request)
+        if fresh and limits.enabled:
+            response.set_cookie(VISITOR_COOKIE, visitor, httponly=True, samesite="lax",
+                                secure=request.url.scheme == "https", max_age=30 * 24 * 3600)
+        return response
 
-    def _job(job_id: str) -> dict:
+    def _owner(request: Request) -> str:
+        return request.state.visitor if limits.enabled else ""
+
+    def _job(job_id: str, request: Request) -> dict:
         try:
-            return store.get(job_id)
+            job = store.get(job_id)
         except KeyError:
             raise HTTPException(404, "job not found")
+        if limits.enabled and not secrets.compare_digest(job.get("owner", ""), _owner(request)):
+            raise HTTPException(404, "job not found")  # don't reveal other people's jobs
+        return job
 
     def _clip_urls(job_id: str, clip: dict) -> dict:
         if clip.get("output_path"):
@@ -116,40 +172,84 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     @app.get("/api/defaults")
     def defaults():
         d = dataclasses.asdict(Settings())
+        if limits.enabled:
+            d.update(whisper_model=limits.whisper_models[0], num_clips=min(3, limits.max_clips))
         return {k: d[k] for k in sorted(JOB_SETTING_KEYS)}
+
+    @app.get("/api/config")
+    def config():
+        return {"public": limits.enabled,
+                "limits": dataclasses.asdict(limits) if limits.enabled else None}
 
     # ----------------------------------------------------------------- jobs
     @app.get("/api/jobs")
-    def list_jobs():
+    def list_jobs(request: Request):
         out = []
+        owner = _owner(request)
         for j in store.list():
+            if limits.enabled and j.get("owner") != owner:
+                continue
             m = store.manifest(j["id"])
             out.append({k: j[k] for k in ("id", "created", "source_name", "status", "stage",
                                           "progress", "error")}
                        | {"clips": len(m["clips"]) if m else 0})
         return out
 
+    def _apply_limits(cfg: dict) -> dict:
+        cfg = dict(cfg)
+        cfg["num_clips"] = max(1, min(int(cfg.get("num_clips", 3)), limits.max_clips))
+        if cfg.get("whisper_model") not in limits.whisper_models:
+            cfg["whisper_model"] = limits.whisper_models[0]
+        cfg["broll_max"] = min(int(cfg.get("broll_max", 2)), 2)
+        cfg["max_source_minutes"] = limits.max_minutes
+        return cfg
+
     @app.post("/api/jobs")
-    async def create_job(url: str = Form(""), settings: str = Form("{}"),
+    async def create_job(request: Request, url: str = Form(""), settings: str = Form("{}"),
                          file: Optional[UploadFile] = File(None)):
         try:
             cfg = _clean_settings(json.loads(settings or "{}"))
         except json.JSONDecodeError:
             raise HTTPException(400, "settings must be JSON")
+        owner = _owner(request)
+        if limits.enabled:
+            cfg = _apply_limits(cfg)
+            jobs = store.list()
+            if any(j.get("owner") == owner and j["status"] in ("queued", "running") for j in jobs):
+                raise HTTPException(429, "You already have a video processing. Wait for it to finish.")
+            if sum(j["status"] in ("queued", "running") for j in jobs) >= limits.max_queue:
+                raise HTTPException(503, "The studio is busy right now. Please try again in a few minutes.")
         if file is not None and file.filename:
             ext = Path(file.filename).suffix.lower()
             if ext not in UPLOAD_EXTS:
                 raise HTTPException(400, f"unsupported file type {ext}")
-            job = store.create("", file.filename, cfg)
+            job = store.create("", file.filename, cfg, owner=owner)
             dest = store.dir(job["id"]) / ".work" / f"upload{ext}"
+            max_bytes = limits.max_upload_mb * 1024 * 1024 if limits.enabled else None
+            written = 0
             with dest.open("wb") as fh:
                 while chunk := await file.read(8 * 1024 * 1024):
+                    written += len(chunk)
+                    if max_bytes is not None and written > max_bytes:
+                        fh.close()
+                        store.delete(job["id"])
+                        raise HTTPException(413, f"Files are limited to {limits.max_upload_mb} MB here.")
                     fh.write(chunk)
+            if limits.enabled:
+                try:
+                    minutes = probe(dest).duration / 60
+                except Exception:
+                    store.delete(job["id"])
+                    raise HTTPException(400, "That file doesn't look like a video ffmpeg can read.")
+                if minutes > limits.max_minutes:
+                    store.delete(job["id"])
+                    raise HTTPException(413, f"Videos are limited to {limits.max_minutes:g} minutes "
+                                             f"here (this one is {minutes:.0f}).")
             job = store.update(job["id"], source=str(dest), upload=True)
         elif url.strip():
             if not is_url(url.strip()):
                 raise HTTPException(400, "url must start with http:// or https://")
-            job = store.create(url.strip(), url.strip(), cfg)
+            job = store.create(url.strip(), url.strip(), cfg, owner=owner)
         else:
             raise HTTPException(400, "upload a file or paste a URL")
         if workers:
@@ -157,8 +257,9 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return job
 
     @app.get("/api/jobs/{job_id}")
-    def get_job(job_id: str):
-        job = _job(job_id)
+    def get_job(job_id: str, request: Request):
+        job = _job(job_id, request)
+        job.pop("owner", None)
         m = store.manifest(job_id)
         job["clips"] = [_clip_urls(job_id, c) for c in (m["clips"] if m else [])]
         job["source_info"] = ({k: m.get(k) for k in ("duration", "width", "height")} if m else None)
@@ -166,23 +267,27 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return job
 
     @app.delete("/api/jobs/{job_id}")
-    def delete_job(job_id: str):
-        job = _job(job_id)
+    def delete_job(job_id: str, request: Request):
+        job = _job(job_id, request)
         if job["status"] == "running":
             raise HTTPException(409, "job is running")
         store.delete(job_id)
         return {"ok": True}
 
     @app.get("/api/jobs/{job_id}/source")
-    def source_video(job_id: str):
-        _job(job_id)
+    def source_video(job_id: str, request: Request):
+        _job(job_id, request)
         m = store.manifest(job_id)
         if not m or not m.get("video") or not Path(m["video"]).exists():
             raise HTTPException(404, "source not available")
         return FileResponse(m["video"])
 
     @app.get("/api/jobs/{job_id}/transcript")
-    def transcript(job_id: str):
+    def transcript(job_id: str, request: Request):
+        _job(job_id, request)
+        return _load_transcript(job_id)
+
+    def _load_transcript(job_id: str) -> dict:
         path = store.dir(job_id) / ".work" / "transcript.json"
         if not path.exists():
             raise HTTPException(404, "no transcript yet")
@@ -196,7 +301,7 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         raise HTTPException(404, "clip not found")
 
     def _text_between(job_id: str, start: float, end: float) -> str:
-        words = transcript(job_id)["words"]
+        words = _load_transcript(job_id)["words"]
         return " ".join(w["text"] for w in words if w["start"] >= start - 1e-6 and w["end"] <= end + 1e-6)
 
     def _check_range(m: dict, start: float, end: float) -> None:
@@ -206,8 +311,9 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
             raise HTTPException(400, "clips must be 1-180 seconds long")
 
     @app.patch("/api/jobs/{job_id}/clips/{clip_id}")
-    def edit_clip(job_id: str, clip_id: str, body: dict = Body(...), render: bool = True):
-        _job(job_id)
+    def edit_clip(job_id: str, clip_id: str, request: Request, body: dict = Body(...),
+                  render: bool = True):
+        _job(job_id, request)
         changes = {k: v for k, v in body.items() if k in CLIP_EDIT_KEYS}
         if "options" in changes:
             allowed = set(Settings.clip_option_keys())
@@ -240,8 +346,8 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return _clip_urls(job_id, result["clip"])
 
     @app.post("/api/jobs/{job_id}/clips")
-    def add_clip(job_id: str, body: dict = Body(...)):
-        _job(job_id)
+    def add_clip(job_id: str, request: Request, body: dict = Body(...)):
+        _job(job_id, request)
         start, end = float(body.get("start", 0)), float(body.get("end", 0))
         title = str(body.get("title", "")).strip() or "Custom clip"
 
@@ -257,7 +363,8 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return clip
 
     @app.delete("/api/jobs/{job_id}/clips/{clip_id}")
-    def delete_clip(job_id: str, clip_id: str):
+    def delete_clip(job_id: str, clip_id: str, request: Request):
+        _job(job_id, request)
         def apply(m: dict) -> None:
             c = _find(m, clip_id)
             if c.get("output_path"):
@@ -267,8 +374,8 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return {"ok": True}
 
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/render")
-    def rerender(job_id: str, clip_id: str):
-        _job(job_id)
+    def rerender(job_id: str, clip_id: str, request: Request):
+        _job(job_id, request)
         _find(store.manifest(job_id) or {"clips": []}, clip_id)
         if workers:
             workers.render(job_id, clip_id)
@@ -276,7 +383,8 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
 
     # ----------------------------------------------------------------- files
     @app.get("/files/{job_id}/{name}")
-    def files(job_id: str, name: str):
+    def files(job_id: str, name: str, request: Request):
+        _job(job_id, request)
         if "/" in name or name.startswith(".") or not name.endswith(".mp4"):
             raise HTTPException(404)
         path = store.dir(job_id) / name
@@ -322,7 +430,8 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
 def serve(host: str = "127.0.0.1", port: int = 8000, data_dir: str = "clipagent-data") -> None:
     import uvicorn
 
-    if host not in ("127.0.0.1", "localhost") and not os.environ.get("CLIPAGENT_WEB_TOKEN"):
+    if (host not in ("127.0.0.1", "localhost") and not os.environ.get("CLIPAGENT_WEB_TOKEN")
+            and not PublicLimits.from_env().enabled):
         print("warning: serving on a public interface without CLIPAGENT_WEB_TOKEN - anyone who "
               "can reach this port can use it.")
     print(f"clipagent web UI: http://{'localhost' if host in ('0.0.0.0', '127.0.0.1') else host}:{port}")

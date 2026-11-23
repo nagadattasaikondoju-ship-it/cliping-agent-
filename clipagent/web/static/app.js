@@ -71,6 +71,18 @@ function renderNew() {
   main.innerHTML = "";
   main.append($("#tpl-new").content.cloneNode(true));
   const form = $("#new-form"), d = state.defaults;
+  const lim = state.config?.public ? state.config.limits : null;
+  if (lim) {
+    const note = $("#public-note");
+    note.hidden = false;
+    note.textContent = `Free public studio: videos up to ${lim.max_minutes} minutes and ${lim.max_upload_mb} MB, `
+      + `up to ${lim.max_clips} clips each, one video at a time. Your projects are visible only in this browser `
+      + `and are deleted after ${lim.job_ttl_hours} hours.`;
+    form.elements.num_clips.max = lim.max_clips;
+    for (const opt of [...form.elements.whisper_model.options]) {
+      if (!lim.whisper_models.includes(opt.value)) opt.remove();
+    }
+  }
   for (const [k, v] of Object.entries(d)) {
     const el = form.elements[k];
     if (!el) continue;
@@ -322,7 +334,7 @@ window.addEventListener("hashchange", route);
 
 async function boot() {
   try {
-    state.defaults = await api("/api/defaults");
+    [state.defaults, state.config] = await Promise.all([api("/api/defaults"), api("/api/config")]);
   } catch { return; }
   loadStatus().then(() => { if (!currentJobId()) renderNew(); });
   route();
