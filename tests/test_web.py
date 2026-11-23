@@ -26,9 +26,25 @@ def client(tmp_path, monkeypatch):
     return TestClient(create_app(tmp_path / "data"))
 
 
-def test_index_and_defaults(client):
-    assert "clipagent" in client.get("/").text
-    assert client.get("/app.js").status_code == 200
+def test_pages_and_seo(client, monkeypatch):
+    home = client.get("/").text
+    assert "<h1" in home and home.count("<h1") == 1
+    assert 'rel="canonical" href="http://testserver/"' in home
+    assert '"@type": "SoftwareApplication"' in home and '"@type": "FAQPage"' in home
+    assert "__BASE_URL__" not in home
+    studio = client.get("/app")
+    assert studio.status_code == 200 and 'id="new-project-btn"' in studio.text
+    assert "noindex" in studio.text and studio.headers["x-robots-tag"] == "noindex"
+    for asset in ("/app.js", "/theme.css", "/landing.css", "/landing.js", "/og.jpg", "/favicon.svg"):
+        assert client.get(asset).status_code == 200, asset
+    robots = client.get("/robots.txt").text
+    assert "Disallow: /api/" in robots and "Sitemap: http://testserver/sitemap.xml" in robots
+    monkeypatch.setenv("CLIPAGENT_PUBLIC_URL", "https://clips.example.com/")
+    assert "<loc>https://clips.example.com/</loc>" in client.get("/sitemap.xml").text
+    assert 'og:image" content="https://clips.example.com/og.jpg"' in client.get("/").text
+
+
+def test_defaults(client):
     d = client.get("/api/defaults").json()
     assert d["layout"] == "auto" and "num_clips" in d
 

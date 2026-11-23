@@ -11,7 +11,7 @@ const fmtTime = (t) => {
 };
 
 const state = { jobs: [], job: null, defaults: null, status: null, transcript: null,
-                editing: null, pollTimer: null };
+                editing: null, pollTimer: null, seen: new Set() };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: "same-origin", ...opts,
@@ -128,21 +128,22 @@ async function renderJob(id) {
   $("#main").innerHTML = `
     <div class="job-head">
       <div>
-        <h1>${esc(job.source_name)}</h1>
+        <h1 class="font-serif job-title">${esc(job.source_name)}</h1>
         <div class="muted">${job.source_info?.duration ? `${fmtTime(job.source_info.duration)} source · ` : ""}
           ${job.clips.length} clips · ${esc(job.status)}</div>
       </div>
       <div class="row">
-        ${job.status === "done" ? `<button class="btn" id="add-clip">+ Custom clip</button>` : ""}
-        <button class="btn danger" id="delete-job" ${busy ? "disabled" : ""}>Delete</button>
+        ${job.status === "done" ? `<button class="pill pill-ghost" id="add-clip">+ Custom clip</button>` : ""}
+        <button class="pill pill-danger" id="delete-job" ${busy ? "disabled" : ""}>Delete</button>
       </div>
     </div>
-    ${busy ? `<div class="panel"><strong>${esc(job.stage)}</strong>
+    ${busy ? `<div class="panel"><span class="stage-label">${esc(job.stage)}</span>
         <div class="progress"><div style="width:${Math.round(job.progress * 100)}%"></div></div>
         <div class="log">${esc(job.log.slice(-40).join("\n"))}</div></div>` : ""}
     ${job.status === "error" ? `<div class="panel"><p class="error">${esc(job.error)}</p>
         <div class="log">${esc(job.log.slice(-40).join("\n"))}</div></div>` : ""}
     <div class="clips">${job.clips.map(clipCard).join("")}</div>`;
+  job.clips.forEach((c) => state.seen.add(c.id));
 
   $("#delete-job")?.addEventListener("click", async () => {
     if (!confirm("Delete this project and all its clips?")) return;
@@ -170,7 +171,7 @@ function clipCard(c) {
   const tags = [c.layout, c.broll?.length ? `${c.broll.length} b-roll` : "", c.emojis?.length ? "emoji" : "",
                 c.speaker_switches ? `${c.speaker_switches} speaker cuts` : ""].filter(Boolean).join(" · ");
   return `
-    <article class="card" data-id="${esc(c.id)}">
+    <article class="card${state.seen.has(c.id) ? "" : " reveal"}" data-id="${esc(c.id)}">
       <div class="video">
         ${c.url ? `<video src="${esc(c.url)}" controls preload="metadata" playsinline></video>` : ""}
         <span class="badge ${c.virality >= 70 ? "hot" : ""}">${Math.round(c.virality)}</span>
@@ -183,9 +184,9 @@ function clipCard(c) {
         ${c.reason ? `<div class="reason">${esc(c.reason)}</div>` : ""}
         <div class="bars">${bars}</div>
         <div class="actions">
-          <button class="btn" data-act="edit">Edit</button>
-          ${c.url ? `<a class="btn" href="${esc(c.url)}" download>Download</a>` : ""}
-          <button class="btn ghost danger" data-act="delete" title="Delete clip">🗑</button>
+          <button class="pill pill-white pill-sm" data-act="edit">Edit</button>
+          ${c.url ? `<a class="pill pill-ghost pill-sm" href="${esc(c.url)}" download>Download</a>` : ""}
+          <button class="icon-btn danger" data-act="delete" title="Delete clip" aria-label="Delete clip"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
         </div>
       </div>
     </article>`;
@@ -296,6 +297,16 @@ async function saveEditor(asNew) {
 $("#ed-save").addEventListener("click", () => saveEditor(false));
 $("#ed-save-new").addEventListener("click", () => saveEditor(true));
 $("#editor").addEventListener("close", () => $("#ed-source").pause());
+
+// ------------------------------------------------------------------ motion
+const revealObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) { e.target.classList.add("active"); revealObserver.unobserve(e.target); }
+}, { threshold: 0.1, rootMargin: "0px 0px -40px 0px" });
+function observeReveals() {
+  document.querySelectorAll(".reveal:not(.active)").forEach((el) => revealObserver.observe(el));
+}
+new MutationObserver(observeReveals).observe($("#main"), { childList: true, subtree: true });
+window.addEventListener("scroll", () => $("#main-nav").classList.toggle("scrolled", window.scrollY > 20), { passive: true });
 
 // ------------------------------------------------------------------ routing
 function currentJobId() { const p = location.hash.split("/"); return p[1] === "job" ? p[2] : null; }

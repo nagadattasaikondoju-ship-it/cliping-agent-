@@ -1,138 +1,329 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" class="no-js">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>clipagent</title>
-  <link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>clipagent: Open-Source AI Clipping Agent for Viral Shorts</title>
+  <meta name="description" content="Turn long videos into viral 9:16 shorts. AI finds the highlights, follows the speaker, adds animated captions and scores every clip. Free and open source.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="__BASE_URL__/">
+  <meta name="theme-color" content="#050505">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="clipagent">
+  <meta property="og:title" content="clipagent: long videos in, viral shorts out">
+  <meta property="og:description" content="Open-source AI clipping agent: highlight detection, speaker-tracking 9:16 reframing, animated captions and a virality score for every clip.">
+  <meta property="og:url" content="__BASE_URL__/">
+  <meta property="og:image" content="__BASE_URL__/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="clipagent: long videos in, viral shorts out">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="clipagent: long videos in, viral shorts out">
+  <meta name="twitter:description" content="Open-source AI clipping agent for podcasts, interviews and streams.">
+  <meta name="twitter:image" content="__BASE_URL__/og.jpg">
+
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/landing.css">
+  <script>document.documentElement.classList.replace("no-js", "js");</script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "clipagent",
+    "description": "Open-source AI clipping agent that turns long videos into viral short-form clips. Detects highlights, reframes to 9:16 following the active speaker, adds animated captions and scores each clip for virality.",
+    "applicationCategory": "MultimediaApplication",
+    "applicationSubCategory": "Video editing",
+    "operatingSystem": "macOS, Linux, Windows, Docker",
+    "url": "__BASE_URL__/",
+    "image": "__BASE_URL__/og.jpg",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "featureList": [
+      "AI highlight detection with Claude or Gemini",
+      "Virality score from 0 to 100 for every clip",
+      "Active-speaker tracking and 9:16 reframing",
+      "Split-screen layout for two-person conversations",
+      "Word-by-word animated captions with emoji",
+      "Automatic B-roll cutaways",
+      "Web editor to trim, restyle and re-render clips"
+    ],
+    "codeRepository": "https://github.com/nagadattasaikondoju-ship-it/cliping-agent-"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Is clipagent free?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. clipagent is open source under the MIT licence and runs on your own computer or server. If you add an AI key, you pay Anthropic or Google directly for the few requests it makes per video." } },
+      { "@type": "Question", "name": "Does clipagent work without an API key?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. Without a key, clipagent picks clips with its built-in scorer, which looks at hooks, pacing, payoff phrases and audio energy. An Anthropic (Claude) or Google (Gemini) key makes the picks noticeably better and adds titles, descriptions and hashtags." } },
+      { "@type": "Question", "name": "Which videos can I use?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more), or a link from YouTube, Vimeo, Twitch, X and the other sites yt-dlp supports." } },
+      { "@type": "Question", "name": "Do my videos leave my computer?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. Transcription, face tracking and rendering all happen locally. If you set an AI key, only the transcript text is sent to Claude or Gemini to choose highlights." } },
+      { "@type": "Question", "name": "How does clipagent decide who to follow in the frame?",
+        "acceptedAnswer": { "@type": "Answer", "text": "It tracks every face, measures how much each mouth moves while there is speech in the audio, and points a smoothed virtual camera at whoever is talking. When two people take turns, it can switch to a split-screen layout." } }
+    ]
+  }
+  </script>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="#/">clip<span>agent</span></a>
-    <div id="status-chips" class="chips"></div>
+  <div class="noise-overlay" aria-hidden="true"></div>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header>
+    <nav id="main-nav" class="site-nav" aria-label="Main">
+      <div class="container nav-inner">
+        <a href="/" class="logo font-serif" aria-label="clipagent home">clipagent<span class="dot">.</span></a>
+        <div class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#open-source">Open source</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <a href="/app" class="pill pill-white">Open studio</a>
+      </div>
+    </nav>
   </header>
 
-  <div class="layout">
-    <aside class="sidebar">
-      <button class="btn primary block" id="new-project-btn">+ New project</button>
-      <h3>Projects</h3>
-      <ul id="job-list" class="job-list"></ul>
-    </aside>
-
-    <main id="main"></main>
-  </div>
-
-  <!-- New project -->
-  <template id="tpl-new">
-    <section class="panel narrow">
-      <h1>Make clips from a long video</h1>
-      <form id="new-form">
-        <label class="drop" id="drop">
-          <input type="file" name="file" accept="video/*,audio/*" hidden>
-          <strong>Drop a video here</strong> or click to choose a file
-          <span class="filename"></span>
-        </label>
-        <div class="or">or</div>
-        <input class="input" name="url" type="url" placeholder="Paste a YouTube, Vimeo, X or Twitch link">
-
-        <details class="options" open>
-          <summary>Options</summary>
-          <div class="grid">
-            <label>Clips <input class="input" type="number" name="num_clips" min="1" max="30"></label>
-            <label>Min length (s) <input class="input" type="number" name="min_duration" min="5" max="170"></label>
-            <label>Max length (s) <input class="input" type="number" name="max_duration" min="10" max="180"></label>
-            <label>Layout
-              <select class="input" name="layout">
-                <option value="auto">Auto</option>
-                <option value="crop">Follow speaker</option>
-                <option value="split">Split screen</option>
-                <option value="blur">Full frame + blur</option>
-              </select>
-            </label>
-            <label>Transcription
-              <select class="input" name="whisper_model">
-                <option value="base">Fast (base)</option>
-                <option value="small">Balanced (small)</option>
-                <option value="medium">Accurate (medium)</option>
-                <option value="large-v3">Best (large-v3)</option>
-              </select>
-            </label>
-            <label>Highlight colour <input class="input" type="color" name="caption_highlight"></label>
-          </div>
-          <div class="toggles">
-            <label><input type="checkbox" name="use_llm"> AI picks highlights</label>
-            <label><input type="checkbox" name="captions"> Captions</label>
-            <label><input type="checkbox" name="show_title"> Hook title</label>
-            <label><input type="checkbox" name="emoji"> Emoji</label>
-            <label><input type="checkbox" name="broll"> B-roll</label>
-            <label><input type="checkbox" name="speaker_detection"> Speaker detection</label>
-          </div>
-        </details>
-        <p class="error" id="new-error"></p>
-        <button class="btn primary big" type="submit">Find clips</button>
-      </form>
-    </section>
-  </template>
-
-  <!-- Editor dialog -->
-  <dialog id="editor" class="dialog wide">
-    <form method="dialog" class="dialog-head">
-      <h2>Edit clip</h2>
-      <button class="btn ghost" value="close">✕</button>
-    </form>
-    <div class="editor">
-      <div class="editor-left">
-        <video id="ed-source" controls preload="metadata"></video>
-        <div class="range-row">
-          <label>Start <input class="input" id="ed-start" type="number" step="0.1"></label>
-          <button class="btn" id="ed-set-start" type="button">Set to playhead</button>
-          <label>End <input class="input" id="ed-end" type="number" step="0.1"></label>
-          <button class="btn" id="ed-set-end" type="button">Set to playhead</button>
-          <button class="btn" id="ed-preview" type="button">▶ Preview</button>
-          <span id="ed-length" class="muted"></span>
-        </div>
-        <p class="muted small">Click a word to jump there. Shift-click to set the clip's start/end to that word.</p>
-        <div id="ed-transcript" class="transcript"></div>
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-atmosphere" aria-hidden="true">
+        <div class="glow glow-a"></div>
+        <div class="glow glow-b"></div>
+        <div class="hero-fade"></div>
       </div>
-      <div class="editor-right">
-        <label>Title <input class="input" id="ed-title" maxlength="100"></label>
-        <label>Description <textarea class="input" id="ed-description" rows="3"></textarea></label>
-        <label>Hashtags <input class="input" id="ed-hashtags" placeholder="comma separated"></label>
-        <label>Layout
-          <select class="input" id="ed-layout">
-            <option value="">Project default</option>
-            <option value="auto">Auto</option>
-            <option value="crop">Follow speaker</option>
-            <option value="split">Split screen</option>
-            <option value="blur">Full frame + blur</option>
-          </select>
-        </label>
-        <label>Highlight colour <input class="input" type="color" id="ed-highlight"></label>
-        <div class="toggles col">
-          <label><input type="checkbox" id="ed-captions"> Captions</label>
-          <label><input type="checkbox" id="ed-show_title"> Hook title</label>
-          <label><input type="checkbox" id="ed-emoji"> Emoji</label>
-          <label><input type="checkbox" id="ed-broll"> B-roll</label>
+
+      <!-- Floating clip mockups (decorative) -->
+      <div class="float-phone float-left animate-float-left" aria-hidden="true">
+        <div class="phone">
+          <div class="phone-scene scene-a"></div>
+          <span class="phone-score hot">92</span>
+          <p class="phone-caption">THE <b>BIGGEST</b> MISTAKE</p>
         </div>
-        <p class="error" id="ed-error"></p>
-        <div class="row">
-          <button class="btn primary" id="ed-save" type="button">Save &amp; re-render</button>
-          <button class="btn" id="ed-save-new" type="button">Save as new clip</button>
+      </div>
+      <div class="float-phone float-right animate-float-right" aria-hidden="true">
+        <div class="phone">
+          <div class="phone-scene scene-b"></div>
+          <span class="phone-score">78</span>
+          <span class="phone-emoji">💰</span>
+          <p class="phone-caption">MADE A <b>MILLION</b></p>
         </div>
+      </div>
+
+      <div class="container hero-content">
+        <div id="hero-content-wrapper" class="hero-wrapper">
+          <div class="reveal">
+            <h1 id="hero-title" class="hero-title font-serif">
+              Long videos in.<br>
+              <span class="italic light">Viral shorts out.</span>
+            </h1>
+          </div>
+          <div class="reveal" style="transition-delay: 200ms">
+            <p class="hero-sub">
+              clipagent is an open-source AI clipping agent. It finds the moments worth sharing, follows whoever is talking, adds captions and scores every clip, all on your own machine.
+            </p>
+          </div>
+          <div class="reveal hero-actions" style="transition-delay: 400ms">
+            <a href="/app" class="glass-pill group">
+              <span class="glass-glow" aria-hidden="true"></span>
+              <span class="glass-inner">Make your first clip <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+            </a>
+            <div class="meta-line">
+              <span>Open source</span>
+              <span class="sep" aria-hidden="true"></span>
+              <span>MIT licence</span>
+              <span class="sep" aria-hidden="true"></span>
+              <time id="current-time"></time>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mission -->
+    <section class="section mission" aria-labelledby="mission-title">
+      <div class="container">
+        <div class="narrow center reveal">
+          <h2 id="mission-title" class="mission-title font-serif">We cut away everything that isn't the moment.</h2>
+          <p class="mission-sub">
+            A two-hour podcast holds a handful of thirty-second stories. clipagent finds them, opens each one on a hook, ends it on the payoff, and frames it for a phone screen.
+          </p>
+        </div>
+        <ul class="spec-strip" aria-label="Specifications">
+          <li class="reveal"><strong>9:16</strong><span>1080 × 1920 output</span></li>
+          <li class="reveal" style="transition-delay: 100ms"><strong>0–100</strong><span>virality score</span></li>
+          <li class="reveal" style="transition-delay: 200ms"><strong>Word-level</strong><span>animated captions</span></li>
+          <li class="reveal" style="transition-delay: 300ms"><strong>Local</strong><span>runs on your machine</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="section works" aria-labelledby="features-title">
+      <div class="container rel">
+        <div class="reveal works-head">
+          <h2 id="features-title" class="display font-serif center">Every clip,<br><span class="italic">ready to post</span></h2>
+        </div>
+
+        <div class="card-grid">
+          <div class="parallax-card-down">
+            <article class="reveal feature-card card-red">
+              <div class="card-top">
+                <span class="card-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6-4.5-4.2 6.1-.7z"/></svg></span>
+                <span class="card-num">01</span>
+              </div>
+              <div>
+                <h3 class="card-title font-serif">Finds the<br>moments</h3>
+                <p class="card-text">Claude or Gemini reads the whole transcript and picks clips with a hook in the first three seconds and a clean ending. Each one gets a title, a description and hashtags.</p>
+              </div>
+              <div class="card-rule"></div>
+            </article>
+          </div>
+
+          <div class="parallax-card-up offset">
+            <article class="reveal feature-card card-black" style="transition-delay: 150ms">
+              <div class="card-top">
+                <span class="card-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></span>
+                <span class="card-num">02</span>
+              </div>
+              <div>
+                <h3 class="card-title font-serif">Follows the<br>speaker</h3>
+                <p class="card-text">Faces are tracked through the clip and the frame follows whoever is talking, cutting cleanly when the conversation changes hands. Two people in turn? It goes split-screen.</p>
+              </div>
+              <div class="card-rule"></div>
+            </article>
+          </div>
+
+          <div class="parallax-card-down">
+            <article class="reveal feature-card card-black">
+              <div class="card-top">
+                <span class="card-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 12h4M13 12h4M7 15.5h7"/></svg></span>
+                <span class="card-num">03</span>
+              </div>
+              <div>
+                <h3 class="card-title font-serif">Captions<br>that pop</h3>
+                <p class="card-text">Bold captions one to three words at a time, with the spoken word highlighted. You can add emoji on visual words and stock B-roll cutaways.</p>
+              </div>
+              <div class="card-rule"></div>
+            </article>
+          </div>
+
+          <div class="parallax-card-up offset">
+            <article class="reveal feature-card card-red" style="transition-delay: 150ms">
+              <div class="card-top">
+                <span class="card-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></span>
+                <span class="card-num">04</span>
+              </div>
+              <div>
+                <h3 class="card-title font-serif">Scores<br>virality</h3>
+                <p class="card-text">Every clip gets a score from 0 to 100, broken down into hook, flow, value, emotion, pacing and trend, so you know which one to post first.</p>
+              </div>
+              <div class="card-rule"></div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <div class="dot-pattern" aria-hidden="true"></div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <div class="container">
+        <h2 id="how-title" class="display-sm font-serif center reveal">Three steps. <span class="italic">No timeline.</span></h2>
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step-num font-serif">i.</span>
+            <h3>Drop a video</h3>
+            <p>Upload a file or paste a link from YouTube, Vimeo, Twitch or X. Podcasts, interviews, streams and talks all work.</p>
+          </li>
+          <li class="step reveal" style="transition-delay: 150ms">
+            <span class="step-num font-serif">ii.</span>
+            <h3>Let the agent cut</h3>
+            <p>clipagent transcribes the video, picks the highlights, reframes them to 9:16, burns in captions and scores each clip.</p>
+          </li>
+          <li class="step reveal" style="transition-delay: 300ms">
+            <span class="step-num font-serif">iii.</span>
+            <h3>Review and download</h3>
+            <p>Trim on the transcript, change the title, layout or colours, then re-render and download in one click.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Open source -->
+    <section id="open-source" class="section" aria-labelledby="oss-title">
+      <div class="container oss">
+        <div class="reveal">
+          <h2 id="oss-title" class="display-sm font-serif">Yours to run.<br><span class="italic">Yours to change.</span></h2>
+          <p class="muted-lg">MIT-licensed and self-hosted. Your videos stay on your machine. Only the transcript text goes to the AI model you choose.</p>
+          <a class="pill pill-white" href="https://github.com/nagadattasaikondoju-ship-it/cliping-agent-" rel="noopener">View on GitHub</a>
+        </div>
+        <pre class="terminal reveal" style="transition-delay: 150ms" aria-label="Install commands"><code><span class="c"># install</span>
+./scripts/install.sh
+
+<span class="c"># open the studio</span>
+clipagent serve
+
+<span class="c"># or straight from the terminal</span>
+clipagent podcast.mp4 --emoji</code></pre>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="section" aria-labelledby="faq-title">
+      <div class="container narrow">
+        <h2 id="faq-title" class="display-sm font-serif center reveal">Questions</h2>
+        <div class="faq">
+          <details class="reveal"><summary>Is clipagent free?</summary>
+            <p>Yes. It's open source under the MIT licence and runs on your own computer or server. If you add an AI key, you pay Anthropic or Google directly for the few requests it makes per video.</p></details>
+          <details class="reveal"><summary>Does it work without an API key?</summary>
+            <p>Yes. Without a key, a built-in scorer picks clips by looking at hooks, pacing, payoff phrases and audio energy. A Claude or Gemini key makes the picks noticeably better and adds titles, descriptions and hashtags.</p></details>
+          <details class="reveal"><summary>Which videos can I use?</summary>
+            <p>Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more), or a link from YouTube, Vimeo, Twitch, X and the other sites yt-dlp supports.</p></details>
+          <details class="reveal"><summary>Do my videos leave my computer?</summary>
+            <p>No. Transcription, face tracking and rendering all happen locally. If you set an AI key, only the transcript text is sent to Claude or Gemini to choose highlights.</p></details>
+          <details class="reveal"><summary>How does it decide who to follow in the frame?</summary>
+            <p>It tracks every face, measures how much each mouth moves while there is speech, and points a smoothed virtual camera at whoever is talking. When two people take turns, it can switch to split-screen.</p></details>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section cta" aria-labelledby="cta-title">
+      <div class="container center reveal">
+        <h2 id="cta-title" class="display font-serif">Your next short is<br><span class="italic">already recorded.</span></h2>
+        <a href="/app" class="pill pill-white pill-lg">Open the studio</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p class="wordmark" aria-hidden="true">CLIPAGENT.</p>
+      <div class="footer-links">
+        <nav aria-label="Footer">
+          <a href="/app">Studio</a>
+          <a href="https://github.com/nagadattasaikondoju-ship-it/cliping-agent-" rel="noopener">GitHub</a>
+          <a href="https://github.com/nagadattasaikondoju-ship-it/cliping-agent-#readme" rel="noopener">Documentation</a>
+        </nav>
+        <p class="fine">© <span id="year">2026</span> clipagent contributors. MIT licence.</p>
       </div>
     </div>
-  </dialog>
+  </footer>
 
-  <!-- Login -->
-  <dialog id="login" class="dialog">
-    <form id="login-form" class="dialog-body">
-      <h2>Password</h2>
-      <input class="input" type="password" name="password" autofocus>
-      <p class="error" id="login-error"></p>
-      <button class="btn primary">Sign in</button>
-    </form>
-  </dialog>
-
-  <script src="/app.js"></script>
+  <script src="/landing.js" defer></script>
 </body>
 </html>

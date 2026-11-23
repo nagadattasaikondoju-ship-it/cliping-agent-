@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import dataclasses
+import html
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
@@ -284,7 +285,37 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         return FileResponse(path, media_type="video/mp4",
                             headers={"Cache-Control": "no-cache"})
 
-    app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+    # ----------------------------------------------------------------- pages / SEO
+    def base_url(request: Request) -> str:
+        """Public URL for canonical/OG tags: CLIPAGENT_PUBLIC_URL, else the request's host."""
+        return (os.environ.get("CLIPAGENT_PUBLIC_URL") or str(request.base_url)).rstrip("/")
+
+    landing_html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def landing(request: Request):
+        return HTMLResponse(landing_html.replace("__BASE_URL__", html.escape(base_url(request))))
+
+    @app.get("/app", include_in_schema=False)
+    def studio():
+        return FileResponse(STATIC / "app.html", media_type="text/html",
+                            headers={"X-Robots-Tag": "noindex"})
+
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots(request: Request):
+        return PlainTextResponse(
+            "User-agent: *\nAllow: /$\nDisallow: /app\nDisallow: /api/\nDisallow: /files/\n\n"
+            f"Sitemap: {base_url(request)}/sitemap.xml\n")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    def sitemap(request: Request):
+        xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+               '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+               f"  <url><loc>{html.escape(base_url(request))}/</loc><changefreq>weekly</changefreq>"
+               "<priority>1.0</priority></url>\n</urlset>\n")
+        return Response(xml, media_type="application/xml")
+
+    app.mount("/", StaticFiles(directory=STATIC, html=False), name="static")
     return app
 
 

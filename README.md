@@ -76,10 +76,12 @@ Keys are read from the environment, from `./.env`, or from `~/.config/clipagent/
 ### Web UI
 
 ```bash
-clipagent serve                 # http://localhost:8000
+clipagent serve                 # landing page: http://localhost:8000 · studio: http://localhost:8000/app
 ```
 
 To run it on a server, set `CLIPAGENT_WEB_TOKEN` in `.env` to password-protect it, then start it with `clipagent serve --host 0.0.0.0`.
+
+The landing page at `/` is built for search and sharing. It has a title, description and canonical URL, Open Graph and Twitter cards with a share image, schema.org `SoftwareApplication` and `FAQPage` data, and `robots.txt` and `sitemap.xml`. When you host it, set `CLIPAGENT_PUBLIC_URL` so those links use your domain. The studio at `/app` is marked `noindex`. All styling lives in `clipagent/web/static/theme.css`, which both pages share.
 
 ### Command line
 
