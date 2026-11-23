@@ -2,8 +2,7 @@
 
 Every job is a folder: data/jobs/<id>/job.json plus a clipagent Project
 (clips.json, rendered clips, .work/). Heavy work (transcription, rendering)
-runs one job at a time on a worker thread; publishing runs on its own thread
-so a long render doesn't hold up an upload.
+runs one task at a time on a worker thread.
 """
 
 from __future__ import annotations
@@ -132,10 +131,7 @@ class Workers:
     def __init__(self, store: JobStore):
         self.store = store
         self.heavy: "queue.Queue[tuple]" = queue.Queue()
-        self.light: "queue.Queue[tuple]" = queue.Queue()
-        self.publish_results: dict[str, dict] = {}
-        for q in (self.heavy, self.light):
-            threading.Thread(target=self._loop, args=(q,), daemon=True).start()
+        threading.Thread(target=self._loop, args=(self.heavy,), daemon=True).start()
 
     def _loop(self, q: "queue.Queue[tuple]") -> None:
         while True:
@@ -154,12 +150,6 @@ class Workers:
     def render(self, job_id: str, clip_id: str) -> None:
         self.store.edit_manifest(job_id, lambda m: _set_status(m, clip_id, "queued"))
         self.heavy.put(("render", job_id, clip_id))
-
-    def publish(self, job_id: str, clip_id: str, platforms: list[str], req: dict) -> str:
-        task_id = uuid.uuid4().hex[:10]
-        self.publish_results[task_id] = {"status": "queued", "results": []}
-        self.light.put(("publish", task_id, job_id, clip_id, platforms, req))
-        return task_id
 
     # --------------------------------------------------------------- tasks
     def _do_process(self, job_id: str) -> None:
@@ -214,34 +204,6 @@ class Workers:
                     c.update({k: rendered[k] for k in RENDER_FIELDS})
                     c["version"] = c.get("version", 0) + 1
         store.edit_manifest(job_id, apply)
-
-    def _do_publish(self, task_id: str, job_id: str, clip_id: str, platforms: list[str],
-                    req: dict) -> None:
-        from ..publish import PostRequest, publish
-
-        state = self.publish_results[task_id]
-        state["status"] = "running"
-        m = self.store.manifest(job_id) or {"clips": []}
-        clip = next((c for c in m["clips"] if c["id"] == clip_id), None)
-        if not clip or not clip.get("output_path"):
-            state.update(status="done", results=[{"platform": p, "ok": False,
-                                                  "detail": "clip is not rendered"} for p in platforms])
-            return
-        post = PostRequest(video=Path(clip["output_path"]), title=req.get("title") or clip["title"],
-                           description=req.get("description", clip.get("description", "")),
-                           hashtags=req.get("hashtags", clip.get("hashtags", [])),
-                           privacy=req.get("privacy", "private"))
-        for platform in platforms:
-            result = publish(platform, post, log=lambda l: self.store.log(job_id, str(l)))
-            state["results"].append(result.to_dict())
-            if result.ok:
-                def record(m: dict, r=result.to_dict()) -> None:
-                    for c in m["clips"]:
-                        if c["id"] == clip_id:
-                            c.setdefault("published", []).append({**r, "time": time.time()})
-                self.store.edit_manifest(job_id, record)
-        state["status"] = "done"
-
 
 def _set_status(manifest: dict, clip_id: str, status: str) -> None:
     for c in manifest["clips"]:

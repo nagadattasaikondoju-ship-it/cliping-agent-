@@ -21,6 +21,8 @@ def parse_env(text: str) -> dict[str, str]:
         key, value = key.strip(), value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
+        elif value.startswith("#"):  # KEY=   # just a comment
+            value = ""
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         if key:

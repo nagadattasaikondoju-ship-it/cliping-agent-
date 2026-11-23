@@ -11,7 +11,7 @@ const fmtTime = (t) => {
 };
 
 const state = { jobs: [], job: null, defaults: null, status: null, transcript: null,
-                editing: null, pollTimer: null, publishing: null };
+                editing: null, pollTimer: null };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: "same-origin", ...opts,
@@ -44,9 +44,7 @@ async function loadStatus() {
   } catch { return; }
   const pick = (name) => state.status.checks.find((c) => c.name.startsWith(name));
   const chips = [
-    ["Claude", pick("Claude API key")], ["GPU", pick("GPU")], ["B-roll", pick("B-roll")],
-    ...Object.entries(state.status.publishers).map(([k, v]) =>
-      [k[0].toUpperCase() + k.slice(1), { status: v.ready ? "ok" : "warn", detail: v.detail }]),
+    ["AI", pick("AI provider")], ["GPU", pick("GPU")], ["B-roll", pick("B-roll")],
   ];
   const fails = state.status.checks.filter((c) => c.status === "fail");
   $("#status-chips").innerHTML =
@@ -80,8 +78,8 @@ function renderNew() {
     else if (el.type === "color") el.value = "#" + v;
     else el.value = v ?? "";
   }
-  if (!state.status?.checks.find((c) => c.name === "Claude API key" && c.status === "ok")) {
-    form.elements.use_llm.parentElement.title = "Add ANTHROPIC_API_KEY to enable";
+  if (!state.status?.checks.find((c) => c.name === "AI provider" && c.status === "ok")) {
+    form.elements.use_llm.parentElement.title = "Add ANTHROPIC_API_KEY or GEMINI_API_KEY to enable";
   }
   const drop = $("#drop"), fileInput = form.elements.file;
   const showName = () => { $(".filename", drop).textContent = fileInput.files[0]?.name || ""; };
@@ -155,7 +153,6 @@ async function renderJob(id) {
   for (const card of document.querySelectorAll(".card")) {
     const clip = job.clips.find((c) => c.id === card.dataset.id);
     card.querySelector("[data-act=edit]")?.addEventListener("click", () => openEditor(clip));
-    card.querySelector("[data-act=publish]")?.addEventListener("click", () => openPublisher(clip));
     card.querySelector("[data-act=delete]")?.addEventListener("click", async () => {
       if (!confirm("Delete this clip?")) return;
       await api(`/api/jobs/${id}/clips/${clip.id}`, { method: "DELETE" });
@@ -185,12 +182,9 @@ function clipCard(c) {
         <div class="meta">${fmtTime(c.start)}–${fmtTime(c.end)} · ${Math.round(c.duration)}s${tags ? " · " + esc(tags) : ""}</div>
         ${c.reason ? `<div class="reason">${esc(c.reason)}</div>` : ""}
         <div class="bars">${bars}</div>
-        ${c.published?.length ? `<div class="meta">Posted: ${c.published.map((p) =>
-          p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.platform)}</a>` : esc(p.platform)).join(", ")}</div>` : ""}
         <div class="actions">
           <button class="btn" data-act="edit">Edit</button>
-          ${c.url ? `<a class="btn" href="${esc(c.url)}" download>Download</a>
-                     <button class="btn" data-act="publish">Post</button>` : ""}
+          ${c.url ? `<a class="btn" href="${esc(c.url)}" download>Download</a>` : ""}
           <button class="btn ghost danger" data-act="delete" title="Delete clip">🗑</button>
         </div>
       </div>
@@ -302,51 +296,6 @@ async function saveEditor(asNew) {
 $("#ed-save").addEventListener("click", () => saveEditor(false));
 $("#ed-save-new").addEventListener("click", () => saveEditor(true));
 $("#editor").addEventListener("close", () => $("#ed-source").pause());
-
-// ------------------------------------------------------------------ publisher
-function openPublisher(clip) {
-  state.publishing = clip;
-  const pubs = state.status?.publishers || {};
-  $("#pub-platforms").innerHTML = ["youtube", "tiktok", "instagram"].map((p) => `
-    <label title="${esc(pubs[p]?.detail || "")}">
-      <input type="checkbox" value="${p}" ${pubs[p]?.ready ? "" : "disabled"}>
-      ${{ youtube: "YouTube Shorts", tiktok: "TikTok", instagram: "Instagram Reels" }[p]}
-      ${pubs[p]?.ready ? "" : `<span class="muted small">— ${esc(pubs[p]?.detail || "not configured")}</span>`}
-    </label>`).join("");
-  $("#pub-title").value = clip.title || "";
-  $("#pub-description").value = clip.description || "";
-  $("#pub-hashtags").value = (clip.hashtags || []).join(", ");
-  $("#pub-results").innerHTML = "";
-  $("#pub-go").disabled = false;
-  $("#publisher").showModal();
-}
-
-$("#pub-go").addEventListener("click", async () => {
-  const platforms = [...document.querySelectorAll("#pub-platforms input:checked")].map((i) => i.value);
-  if (!platforms.length) { $("#pub-results").innerHTML = `<p class="error">Choose a platform.</p>`; return; }
-  const job = state.job, clip = state.publishing;
-  $("#pub-go").disabled = true;
-  $("#pub-results").innerHTML = `<p class="muted">Uploading…</p>`;
-  try {
-    const { task } = await api(`/api/jobs/${job.id}/clips/${clip.id}/publish`, { method: "POST", body: JSON.stringify({
-      platforms, title: $("#pub-title").value, description: $("#pub-description").value,
-      hashtags: $("#pub-hashtags").value.split(",").map((s) => s.trim()).filter(Boolean),
-      privacy: $("#pub-privacy").value }) });
-    let st;
-    do {
-      await new Promise((r) => setTimeout(r, 1500));
-      st = await api(`/api/publish/${task}`);
-      $("#pub-results").innerHTML = st.results.map((r) => `<div class="result ${r.ok ? "ok" : "bad"}">
-        <strong>${esc(r.platform)}</strong>: ${esc(r.detail)}
-        ${r.url ? ` — <a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>` : ""}</div>`).join("")
-        + (st.status !== "done" ? `<p class="muted">Uploading…</p>` : "");
-    } while (st.status !== "done");
-    renderJob(job.id);
-  } catch (err) {
-    $("#pub-results").innerHTML = `<p class="error">${esc(err.message)}</p>`;
-  }
-  $("#pub-go").disabled = false;
-});
 
 // ------------------------------------------------------------------ routing
 function currentJobId() { const p = location.hash.split("/"); return p[1] === "job" ? p[2] : null; }

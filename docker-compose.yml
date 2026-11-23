@@ -10,7 +10,6 @@ x-common: &common
   volumes:
     - ./clipagent-data:/data          # projects and rendered clips
     - clipagent-cache:/cache          # Whisper/face models, emoji, b-roll
-    - ./clipagent-config:/config      # YouTube login token
   restart: unless-stopped
 
 services:

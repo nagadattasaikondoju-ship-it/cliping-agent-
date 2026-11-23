@@ -108,13 +108,9 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     def status():
         if not status_cache or time.time() - status_cache["at"] > 60:
             from ..doctor import run_checks
-            from ..publish import publisher_status
 
-            status_cache.update(at=time.time(),
-                                checks=[c.to_dict() for c in run_checks()],
-                                publishers={k: {"ready": v[0], "detail": v[1]}
-                                            for k, v in publisher_status().items()})
-        return {"checks": status_cache["checks"], "publishers": status_cache["publishers"]}
+            status_cache.update(at=time.time(), checks=[c.to_dict() for c in run_checks()])
+        return {"checks": status_cache["checks"]}
 
     @app.get("/api/defaults")
     def defaults():
@@ -276,27 +272,6 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
         if workers:
             workers.render(job_id, clip_id)
         return {"ok": True}
-
-    @app.post("/api/jobs/{job_id}/clips/{clip_id}/publish")
-    def publish_clip(job_id: str, clip_id: str, body: dict = Body(...)):
-        from ..publish import PLATFORMS
-
-        platforms = [p for p in body.get("platforms", []) if p in PLATFORMS]
-        if not platforms:
-            raise HTTPException(400, f"choose at least one of {', '.join(PLATFORMS)}")
-        if body.get("privacy", "private") not in ("private", "unlisted", "public"):
-            raise HTTPException(400, "bad privacy")
-        _find(store.manifest(job_id) or {"clips": []}, clip_id)
-        if not workers:
-            raise HTTPException(503, "workers disabled")
-        task = workers.publish(job_id, clip_id, platforms, body)
-        return {"task": task}
-
-    @app.get("/api/publish/{task_id}")
-    def publish_status(task_id: str):
-        if not workers or task_id not in workers.publish_results:
-            raise HTTPException(404, "unknown task")
-        return workers.publish_results[task_id]
 
     # ----------------------------------------------------------------- files
     @app.get("/files/{job_id}/{name}")

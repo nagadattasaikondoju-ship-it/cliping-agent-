@@ -89,7 +89,6 @@ class Clip:
     description: str = ""
     status: str = "pending"  # pending | rendering | done | error
     error: str = ""
-    published: list = field(default_factory=list)
 
     @property
     def duration(self) -> float:

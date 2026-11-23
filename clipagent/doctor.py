@@ -80,23 +80,27 @@ def run_checks(whisper_model: str = "small") -> list[Check]:
     checks += _ffmpeg_checks()
 
     for mod, pkg, need in [("numpy", "numpy", True), ("cv2", "opencv-python-headless", True),
-                           ("faster_whisper", "faster-whisper", True), ("anthropic", "anthropic", True),
+                           ("faster_whisper", "faster-whisper", True), ("anthropic", "anthropic", True), ("google.genai", "google-genai", True),
                            ("yt_dlp", "yt-dlp", True), ("PIL", "pillow", True),
-                           ("fastapi", "fastapi (web UI)", False),
-                           ("googleapiclient", "google-api-python-client (YouTube posting)", False)]:
+                           ("fastapi", "fastapi (web UI)", False)]:
         if _has(mod):
             checks.append(Check(f"package {pkg.split()[0]}", OK, "installed"))
         else:
             checks.append(Check(f"package {pkg.split()[0]}", FAIL if need else WARN, "missing",
-                                "pip install -e ." if need else 'pip install -e ".[web,publish]"'))
+                                "pip install -e ." if need else 'pip install -e ".[web]"'))
 
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        checks.append(Check("Claude API key", OK, "ANTHROPIC_API_KEY is set"))
+    from .config import Settings
+    from .llm import resolve_provider
+
+    provider, model = resolve_provider(Settings())
+    if provider:
+        name = "Claude" if provider == "anthropic" else "Gemini"
+        checks.append(Check("AI provider", OK, f"{name} ({model})"))
     else:
-        checks.append(Check("Claude API key", WARN,
-                            "not set - clip picks fall back to the rule-based scorer",
-                            "Create a key at https://console.anthropic.com and put "
-                            "ANTHROPIC_API_KEY=... in .env"))
+        checks.append(Check("AI provider", WARN,
+                            "no API key - clip picks fall back to the rule-based scorer",
+                            "Put ANTHROPIC_API_KEY=... (Claude, console.anthropic.com) or "
+                            "GEMINI_API_KEY=... (Gemini, aistudio.google.com/apikey) in .env"))
 
     gpu, detail = gpu_status()
     checks.append(Check("GPU", OK if gpu else WARN, detail,
@@ -133,10 +137,6 @@ def run_checks(whisper_model: str = "small") -> list[Check]:
                             "on servers)", "Pass --cookies-from-browser chrome, or set "
                             "YTDLP_COOKIES=/path/cookies.txt"))
 
-    from .publish import publisher_status
-
-    for name, (ready, detail) in publisher_status().items():
-        checks.append(Check(f"Posting: {name}", OK if ready else WARN, detail))
     return checks
 
 

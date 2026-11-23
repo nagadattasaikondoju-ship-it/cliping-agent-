@@ -24,9 +24,11 @@ class Settings:
     whisper_compute_type: str = "default"
     language: str | None = None
 
-    # LLM highlight detection (Claude). Disabled automatically if no credentials.
+    # LLM highlight detection. "auto" uses Claude if ANTHROPIC_API_KEY is set,
+    # else Gemini if GEMINI_API_KEY is set, else heuristics only.
     use_llm: bool = True
-    llm_model: str = "claude-opus-5-5"
+    llm_provider: str = "auto"  # auto | anthropic | gemini
+    llm_model: str = ""  # empty = provider default (claude-opus-5-5 / gemini-flash-latest)
     llm_effort: str = "medium"
     llm_weight: float = 0.6  # share of the final virality score that comes from the LLM
 

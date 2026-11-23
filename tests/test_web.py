@@ -91,16 +91,6 @@ def test_full_job_edit_and_rerender(client, sample_video, tmp_path, monkeypatch)
     assert client.delete(f"/api/jobs/{job_id}/clips/{new_id}").status_code == 200
     assert len(client.get(f"/api/jobs/{job_id}").json()["clips"]) == 2
 
-    # Posting without credentials reports a clean per-platform failure.
-    r = client.post(f"/api/jobs/{job_id}/clips/{clip['id']}/publish", json={"platforms": ["tiktok"]})
-    task = r.json()["task"]
-    for _ in range(40):
-        st = client.get(f"/api/publish/{task}").json()
-        if st["status"] == "done":
-            break
-        time.sleep(0.2)
-    assert st["results"][0]["ok"] is False
-
     assert client.delete(f"/api/jobs/{job_id}").status_code == 200
     assert client.get(f"/api/jobs/{job_id}").status_code == 404
 

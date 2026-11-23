@@ -4,8 +4,6 @@
     clipagent doctor                     # check requirements
     clipagent setup                      # download models ahead of time
     clipagent serve                      # web UI + editor
-    clipagent publish clips/ --to youtube,tiktok
-    clipagent auth youtube               # one-time OAuth for YouTube
 """
 
 from __future__ import annotations
@@ -14,12 +12,11 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 
 from .config import Settings
 from .env import load_env
 
-COMMANDS = ("run", "doctor", "setup", "serve", "publish", "auth")
+COMMANDS = ("run", "doctor", "setup", "serve")
 
 
 def add_run_args(p: argparse.ArgumentParser) -> None:
@@ -69,10 +66,13 @@ def add_run_args(p: argparse.ArgumentParser) -> None:
     a.add_argument("--language", default=None, help="Force transcription language, e.g. en")
     a.add_argument("--transcript", default=None,
                    help="Use an existing transcript JSON instead of running Whisper")
-    a.add_argument("--no-llm", action="store_true", help="Heuristic scoring only (no Claude)")
-    a.add_argument("--llm-model", default=d.llm_model)
+    a.add_argument("--no-llm", action="store_true", help="Heuristic scoring only (no AI model)")
+    a.add_argument("--llm-provider", default=d.llm_provider, choices=["auto", "anthropic", "gemini"],
+                   help="auto: Claude if ANTHROPIC_API_KEY is set, else Gemini if GEMINI_API_KEY is set")
+    a.add_argument("--llm-model", default=d.llm_model,
+                   help="Override the model, e.g. claude-sonnet-5-5 or gemini-2.5-pro")
     a.add_argument("--effort", dest="llm_effort", default=d.llm_effort,
-                   choices=["low", "medium", "high", "xhigh", "max"])
+                   choices=["low", "medium", "high", "xhigh", "max"], help="Claude only")
 
     dl = p.add_argument_group("download")
     dl.add_argument("--cookies", default=os.environ.get("YTDLP_COOKIES"),
@@ -88,7 +88,7 @@ def settings_from_args(args) -> Settings:
         num_clips=args.num_clips, min_duration=args.min_duration,
         max_duration=args.max_duration, target_duration=args.target_duration,
         whisper_model=args.whisper_model, whisper_device=args.whisper_device,
-        language=args.language, use_llm=not args.no_llm, llm_model=args.llm_model,
+        language=args.language, use_llm=not args.no_llm, llm_provider=args.llm_provider, llm_model=args.llm_model,
         llm_effort=args.llm_effort, width=int(w), height=int(h), layout=args.layout,
         speaker_detection=not args.no_speaker_detection,
         crf=args.crf, preset=args.preset, captions=not args.no_captions,
@@ -148,65 +148,6 @@ def cmd_serve(args) -> int:
     return 0
 
 
-def _clips_to_post(target: Path, only: list[int] | None) -> list[dict]:
-    """Clips (with metadata) from a clips folder, or a single video file."""
-    if target.is_dir():
-        manifest = json.loads((target / "clips.json").read_text())
-        clips = [c for c in manifest["clips"] if c.get("output_path")]
-        if only:
-            clips = [c for i, c in enumerate(clips, 1) if i in only]
-        return clips
-    return [{"output_path": str(target), "title": target.stem.replace("-", " "),
-             "description": "", "hashtags": []}]
-
-
-def cmd_publish(args) -> int:
-    from .publish import PLATFORMS, PostRequest, publish
-
-    platforms = [p.strip() for p in args.to.split(",") if p.strip()]
-    bad = [p for p in platforms if p not in PLATFORMS]
-    if bad:
-        print(f"Unknown platform(s): {', '.join(bad)}. Choose from {', '.join(PLATFORMS)}",
-              file=sys.stderr)
-        return 2
-    only = [int(x) for x in args.clips.split(",")] if args.clips else None
-    clips = _clips_to_post(Path(args.target), only)
-    if not clips:
-        print("No rendered clips found.", file=sys.stderr)
-        return 1
-    errors = 0
-    for clip in clips:
-        req = PostRequest(video=Path(clip["output_path"]),
-                          title=args.title or clip.get("title", ""),
-                          description=args.description or clip.get("description", ""),
-                          hashtags=(args.hashtags.split(",") if args.hashtags
-                                    else clip.get("hashtags", [])),
-                          privacy=args.privacy)
-        for platform in platforms:
-            print(f"Posting {req.video.name} to {platform} ...")
-            result = publish(platform, req)
-            status = "ok" if result.ok else "FAILED"
-            print(f"  {status}: {result.detail} {result.url}".rstrip())
-            errors += not result.ok
-    return 1 if errors else 0
-
-
-def cmd_auth(args) -> int:
-    if args.platform != "youtube":
-        print("Only YouTube needs an interactive login. TikTok and Instagram use access tokens "
-              "set in .env (see .env.example).")
-        return 0
-    from .publish import PublishError
-    from .publish.youtube import authorize
-
-    try:
-        authorize()
-    except PublishError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="clipagent",
@@ -227,18 +168,6 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--port", type=int, default=8000)
     w.add_argument("--data-dir", default=os.environ.get("CLIPAGENT_DATA_DIR", "clipagent-data"))
 
-    pub = sub.add_parser("publish", help="Post clips to YouTube Shorts, TikTok, Instagram Reels")
-    pub.add_argument("target", help="A clips folder (uses clips.json) or one .mp4 file")
-    pub.add_argument("--to", required=True, help="Comma list: youtube,tiktok,instagram")
-    pub.add_argument("--clips", help="Which clips from the folder, e.g. 1,3 (default: all)")
-    pub.add_argument("--title")
-    pub.add_argument("--description")
-    pub.add_argument("--hashtags", help="Comma list, overrides the generated ones")
-    pub.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private",
-                     help="Default private, so you can review before going live")
-
-    a = sub.add_parser("auth", help="Log in to a posting platform (YouTube)")
-    a.add_argument("platform", choices=["youtube", "tiktok", "instagram"])
     return p
 
 
@@ -249,8 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] not in COMMANDS and argv[0] not in ("-h", "--help"):
         argv.insert(0, "run")
     args = build_parser().parse_args(argv)
-    return {"run": cmd_run, "doctor": cmd_doctor, "setup": cmd_setup, "serve": cmd_serve,
-            "publish": cmd_publish, "auth": cmd_auth}[args.command](args)
+    return {"run": cmd_run, "doctor": cmd_doctor, "setup": cmd_setup,
+            "serve": cmd_serve}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -21,8 +21,8 @@ from tests.conftest import SENTENCES, make_transcript
 
 # ---------------------------------------------------------------- env / emoji
 def test_parse_env():
-    env = parse_env('# c\nA=1\nexport B="two words"\nC=x # note\nEMPTY=\nbad line\n')
-    assert env == {"A": "1", "B": "two words", "C": "x", "EMPTY": ""}
+    env = parse_env('# c\nA=1\nexport B="two words"\nC=x # note\nEMPTY=\nD=   # comment only\nbad line\n')
+    assert env == {"A": "1", "B": "two words", "C": "x", "EMPTY": "", "D": ""}
 
 
 def test_pick_emoji_prefers_specific_words():

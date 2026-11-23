@@ -60,7 +60,7 @@
             <label>Highlight colour <input class="input" type="color" name="caption_highlight"></label>
           </div>
           <div class="toggles">
-            <label><input type="checkbox" name="use_llm"> Claude picks highlights</label>
+            <label><input type="checkbox" name="use_llm"> AI picks highlights</label>
             <label><input type="checkbox" name="captions"> Captions</label>
             <label><input type="checkbox" name="show_title"> Hook title</label>
             <label><input type="checkbox" name="emoji"> Emoji</label>
@@ -96,7 +96,7 @@
       </div>
       <div class="editor-right">
         <label>Title <input class="input" id="ed-title" maxlength="100"></label>
-        <label>Caption for posting <textarea class="input" id="ed-description" rows="3"></textarea></label>
+        <label>Description <textarea class="input" id="ed-description" rows="3"></textarea></label>
         <label>Hashtags <input class="input" id="ed-hashtags" placeholder="comma separated"></label>
         <label>Layout
           <select class="input" id="ed-layout">
@@ -123,32 +123,9 @@
     </div>
   </dialog>
 
-  <!-- Publish dialog -->
-  <dialog id="publisher" class="dialog">
-    <form method="dialog" class="dialog-head">
-      <h2>Post clip</h2>
-      <button class="btn ghost" value="close">✕</button>
-    </form>
-    <div class="pub-body">
-      <div id="pub-platforms" class="toggles col"></div>
-      <label>Title <input class="input" id="pub-title" maxlength="100"></label>
-      <label>Caption <textarea class="input" id="pub-description" rows="3"></textarea></label>
-      <label>Hashtags <input class="input" id="pub-hashtags"></label>
-      <label>Visibility
-        <select class="input" id="pub-privacy">
-          <option value="private">Private (review first)</option>
-          <option value="unlisted">Unlisted</option>
-          <option value="public">Public</option>
-        </select>
-      </label>
-      <div id="pub-results"></div>
-      <button class="btn primary" id="pub-go" type="button">Post</button>
-    </div>
-  </dialog>
-
   <!-- Login -->
   <dialog id="login" class="dialog">
-    <form id="login-form" class="pub-body">
+    <form id="login-form" class="dialog-body">
       <h2>Password</h2>
       <input class="input" type="password" name="password" autofocus>
       <p class="error" id="login-error"></p>
