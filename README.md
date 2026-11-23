@@ -115,6 +115,37 @@ from clipagent import Settings, run_pipeline
 clips = run_pipeline("talk.mp4", "out", Settings(num_clips=3, emoji=True))
 ```
 
+## Host the studio for everyone (Modal)
+
+The studio needs ffmpeg, Whisper and a few GB of RAM, so it runs on [Modal](https://modal.com). Modal's free Starter plan includes $30 of compute a month. One container (2 cores, 4 GB) costs about $0.13 per hour while it's working and shuts down when idle.
+
+In **public mode**, which the Modal app turns on:
+- each visitor only sees their own projects
+- each visitor can process one video at a time
+- uploads are limited to 500 MB and 30 minutes (change with `CLIPAGENT_MAX_UPLOAD_MB` and `CLIPAGENT_MAX_MINUTES`)
+- projects are deleted after 24 hours
+
+**Deploy from your computer:**
+
+```bash
+pip install modal
+modal setup                     # opens the browser to log in
+modal deploy deploy/modal/app.py
+```
+
+**Or let GitHub deploy it** on every push to `main`:
+1. In Modal, go to **Settings → API Tokens → New Token** and copy the token ID and secret.
+2. In GitHub, open the repo's **Settings → Secrets and variables → Actions** and add two repository secrets: `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+3. Run the workflow from **Actions → "deploy studio (Modal)" → Run workflow**. The log prints the URL, `https://<workspace>--clipagent-web.modal.run`.
+
+**AI-picked clips (optional):**
+1. Create a Modal Secret (e.g. `clipagent-ai`) containing `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
+2. Add a GitHub repository variable `CLIPAGENT_MODAL_SECRETS=clipagent-ai`.
+
+All visitors' transcripts then use your quota.
+
+**Link the website to the studio:** in Vercel, add the env var `CLIPAGENT_STUDIO_URL` with the studio URL and redeploy. The "Open studio" buttons will then go to the hosted studio.
+
 ## How it works
 
 - `highlights.py` scores every sentence-aligned window and keeps the best set that doesn't overlap. `llm.py` sends the transcript to Claude (`claude-opus-5-5`) or Gemini (by default the newest Flash model your key can use, falling back to older ones when a model is busy; pin one with `GEMINI_MODEL`), asking for structured JSON output. The model's picks are snapped to word boundaries, re-scored by the heuristics, and the two scores are blended 60/40.

@@ -1,0 +1,35 @@
+name: deploy studio (Modal)
+
+on:
+  push:
+    branches: [main]
+    paths: ["clipagent/**", "deploy/modal/**", "pyproject.toml", ".github/workflows/deploy-modal.yml"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      CLIPAGENT_MODAL_SECRETS: ${{ vars.CLIPAGENT_MODAL_SECRETS }}
+    steps:
+      - name: Skip if Modal is not configured
+        id: check
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::notice::Add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets to deploy the studio."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+      - name: Deploy
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          pip install modal
+          modal deploy deploy/modal/app.py
