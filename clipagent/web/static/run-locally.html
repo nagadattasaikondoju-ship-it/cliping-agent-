@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open the studio · clipagent</title>
+  <meta name="description" content="Install clipagent and open the studio on your own machine. Free and open source.">
+  <meta name="robots" content="noindex, follow">
+  <link rel="canonical" href="__BASE_URL__/app">
+  <meta name="theme-color" content="#050505">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/landing.css">
+  <script>document.documentElement.classList.replace("no-js", "js");</script>
+  <style>
+    .run { min-height: 100vh; min-height: 100svh; display: flex; align-items: center; padding: 140px 0 80px; position: relative; overflow: hidden; }
+    .run .container { position: relative; z-index: 2; }
+    .run-grid { display: grid; gap: 56px; align-items: center; max-width: 1080px; margin: 0 auto; }
+    @media (min-width: 900px) { .run-grid { grid-template-columns: 1fr 1fr; } }
+    .run h1 { font-size: clamp(42px, 6vw, 72px); line-height: 1.05; font-weight: 500; margin: 0 0 24px; color: var(--blush);
+      text-shadow: 0 0 12px rgba(255, 255, 255, 0.5); }
+    .run p { color: var(--muted); font-size: 18px; line-height: 1.7; font-weight: 300; margin: 0 0 20px; }
+    .why { font-size: 15px !important; border-left: 2px solid var(--accent); padding-left: 16px; }
+    .run .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <div class="noise-overlay" aria-hidden="true"></div>
+  <header>
+    <nav id="main-nav" class="site-nav" aria-label="Main">
+      <div class="container nav-inner">
+        <a href="/" class="logo font-serif" aria-label="clipagent home">clipagent<span class="dot">.</span></a>
+        <a href="https://github.com/nagadattasaikondoju-ship-it/cliping-agent-" class="pill pill-white" rel="noopener">GitHub</a>
+      </div>
+    </nav>
+  </header>
+  <main class="run">
+    <div class="hero-atmosphere" aria-hidden="true"><div class="glow glow-a"></div><div class="hero-fade"></div></div>
+    <div class="container">
+      <div class="run-grid">
+        <div class="reveal">
+          <h1 class="font-serif">The studio runs<br><span class="italic light">on your machine.</span></h1>
+          <p>clipagent transcribes, tracks faces and renders video locally, so your footage never leaves your computer. Install it once, then open the studio in your browser.</p>
+          <p class="why">This site is the public homepage. Video processing needs ffmpeg, Whisper and long-running jobs, which a static host can't run.</p>
+          <div class="actions">
+            <a class="pill pill-white" href="https://github.com/nagadattasaikondoju-ship-it/cliping-agent-#install" rel="noopener">Install guide</a>
+            <a class="pill pill-ghost" href="/">Back to home</a>
+          </div>
+        </div>
+        <pre class="terminal reveal" style="transition-delay: 150ms" aria-label="Install commands"><code><span class="c"># 1. get the code</span>
+git clone https://github.com/nagadattasaikondoju-ship-it/cliping-agent-
+cd cliping-agent-
+
+<span class="c"># 2. install (macOS / Linux)</span>
+./scripts/install.sh
+
+<span class="c"># 3. add a key to .env (optional)</span>
+GEMINI_API_KEY=...
+
+<span class="c"># 4. open the studio</span>
+clipagent serve
+<span class="c"># → http://localhost:8000/app</span></code></pre>
+      </div>
+    </div>
+  </main>
+  <script>
+    const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && e.target.classList.add("active")), { threshold: 0.1 });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+    const nav = document.getElementById("main-nav");
+    addEventListener("scroll", () => nav.classList.toggle("scrolled", scrollY > 50), { passive: true });
+  </script>
+</body>
+</html>

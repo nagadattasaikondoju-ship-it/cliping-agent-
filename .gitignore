@@ -10,3 +10,6 @@ clips/
 clipagent-data/
 clipagent-config/
 .env
+
+site/
+.vercel/
