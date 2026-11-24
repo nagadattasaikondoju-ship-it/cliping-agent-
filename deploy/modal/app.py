@@ -36,7 +36,7 @@ image = (
     .add_local_dir(ROOT / "clipagent", "/src/clipagent", copy=True,
                    ignore=["**/__pycache__", "**/*.pyc"])
     .run_commands(
-        "pip install '/src[web]'",
+        "pip install '/src[web,youtube]'",
         # Bake the models into the image so the first visitor doesn't wait.
         "clipagent setup --whisper-model base",
         "clipagent setup --whisper-model small",

@@ -117,7 +117,9 @@ def download(url: str, out_dir: Path, cookies_file: str | None = None,
     if max_minutes:
         from yt_dlp.utils import match_filter_func
 
-        opts["match_filter"] = match_filter_func(f"duration <= {int(max_minutes * 60)}")
+        # "<=?" lets a video through when YouTube hides its duration; the length
+        # is checked again after the download.
+        opts["match_filter"] = match_filter_func(f"duration <=? {int(max_minutes * 60)}")
     cookies = _cookie_file(out_dir, cookies_file)
     if cookies:
         opts["cookiefile"] = cookies

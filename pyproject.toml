@@ -15,14 +15,16 @@ dependencies = [
   "faster-whisper>=1.0",
   "anthropic>=0.80",
   "google-genai>=1.0",
-  "yt-dlp>=2024.1.1",
+  "yt-dlp[default]>=2025.11.12",
   "pillow>=10",
   "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 web = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
-all = ["clipagent[web]"]
+# YouTube now needs a JavaScript runtime (deno) to read video details reliably.
+youtube = ["deno>=2.0"]
+all = ["clipagent[web,youtube]"]
 dev = ["clipagent[all]", "pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
