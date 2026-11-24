@@ -65,12 +65,16 @@ async function loadJobs() {
     </a></li>`).join("") || `<li class="muted small">No projects yet</li>`;
 }
 
+// Which optional parts of the studio are switched on (see /api/config).
+function features() { return state.config?.features || { links: true, editing: true }; }
+
 // ------------------------------------------------------------------ new project
 function renderNew() {
   const main = $("#main");
   main.innerHTML = "";
   main.append($("#tpl-new").content.cloneNode(true));
   const form = $("#new-form"), d = state.defaults;
+  if (!features().links) $("#link-input").remove();
   const lim = state.config?.public ? state.config.limits : null;
   if (lim) {
     const note = $("#public-note");
@@ -114,7 +118,7 @@ function renderNew() {
     }
     const fd = new FormData();
     if (fileInput.files[0]) fd.append("file", fileInput.files[0]);
-    fd.append("url", form.elements.url.value);
+    if (form.elements.url) fd.append("url", form.elements.url.value);
     fd.append("settings", JSON.stringify(settings));
     btn.disabled = true; btn.textContent = fileInput.files[0] ? "Uploading…" : "Starting…";
     try {
@@ -145,7 +149,7 @@ async function renderJob(id) {
           ${job.clips.length} clips · ${esc(job.status)}</div>
       </div>
       <div class="row">
-        ${job.status === "done" ? `<button class="pill pill-ghost" id="add-clip">+ Custom clip</button>` : ""}
+        ${job.status === "done" && features().editing ? `<button class="pill pill-ghost" id="add-clip">+ Custom clip</button>` : ""}
         <button class="pill pill-danger" id="delete-job" ${busy ? "disabled" : ""}>Delete</button>
       </div>
     </div>
@@ -196,8 +200,8 @@ function clipCard(c) {
         ${c.reason ? `<div class="reason">${esc(c.reason)}</div>` : ""}
         <div class="bars">${bars}</div>
         <div class="actions">
-          <button class="pill pill-white pill-sm" data-act="edit">Edit</button>
-          ${c.url ? `<a class="pill pill-ghost pill-sm" href="${esc(c.url)}" download>Download</a>` : ""}
+          ${features().editing ? `<button class="pill pill-white pill-sm" data-act="edit">Edit</button>` : ""}
+          ${c.url ? `<a class="pill ${features().editing ? "pill-ghost" : "pill-white"} pill-sm" href="${esc(c.url)}" download>Download</a>` : ""}
           <button class="icon-btn danger" data-act="delete" title="Delete clip" aria-label="Delete clip"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
         </div>
       </div>

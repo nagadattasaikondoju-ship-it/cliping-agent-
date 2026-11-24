@@ -126,6 +126,8 @@ def _public_client(tmp_path, monkeypatch, **kw):
     from clipagent.web.server import PublicLimits
 
     monkeypatch.delenv("CLIPAGENT_WEB_TOKEN", raising=False)
+    for name in ("CLIPAGENT_LINKS", "CLIPAGENT_EDITING"):
+        monkeypatch.delenv(name, raising=False)
     limits = PublicLimits(enabled=True, **kw)
     return TestClient(create_app(tmp_path / "pub", start_workers=False, limits=limits))
 
@@ -173,6 +175,26 @@ def test_public_upload_limits(tmp_path, monkeypatch, sample_video):
         r = short.post("/api/jobs", files={"file": ("a.mp4", fh, "video/mp4")})
     assert r.status_code == 413 and "minutes" in r.json()["detail"]
     assert short.app.state.store.list() == []  # rejected uploads are removed
+
+
+def test_public_studio_has_no_links_or_editing(tmp_path, monkeypatch, sample_video):
+    c = _public_client(tmp_path, monkeypatch)
+    assert c.get("/api/config").json()["features"] == {"links": False, "editing": False}
+    r = c.post("/api/jobs", data={"url": "https://youtu.be/x"})
+    assert r.status_code == 400 and "Upload a video file" in r.json()["detail"]
+    with open(sample_video, "rb") as fh:
+        job_id = c.post("/api/jobs", files={"file": ("a.mp4", fh, "video/mp4")}).json()["id"]
+    for method, path in (("patch", f"/api/jobs/{job_id}/clips/x"), ("post", f"/api/jobs/{job_id}/clips"),
+                         ("post", f"/api/jobs/{job_id}/clips/x/render")):
+        r = getattr(c, method)(path, json={"start": 0, "end": 10})
+        assert r.status_code == 403, path
+
+    # Switched back on with environment variables.
+    monkeypatch.setenv("CLIPAGENT_LINKS", "1")
+    monkeypatch.setenv("CLIPAGENT_EDITING", "1")
+    from clipagent.web.server import PublicLimits
+    on = TestClient(create_app(tmp_path / "on", start_workers=False, limits=PublicLimits(enabled=True)))
+    assert on.get("/api/config").json()["features"] == {"links": True, "editing": True}
 
 
 def test_cleanup_removes_old_finished_jobs(tmp_path):
