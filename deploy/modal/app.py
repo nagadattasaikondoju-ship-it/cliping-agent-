@@ -21,7 +21,9 @@ from pathlib import Path
 
 import modal
 
-ROOT = Path(__file__).resolve().parents[2]
+# The repo root, only needed on your computer where the image is built. Inside the
+# container this file lives at /root/app.py, which has no grandparent folder.
+ROOT = Path(__file__).resolve().parents[2] if modal.is_local() else Path("/")
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
