@@ -54,7 +54,7 @@
       "Split-screen layout for two-person conversations",
       "Word-by-word animated captions with emoji",
       "Automatic B-roll cutaways",
-      "Web editor to trim, restyle and re-render clips"
+      "Web studio to review, score and download clips"
     ],
     "codeRepository": "https://github.com/nagadattasaikondoju-ship-it/cliping-agent-"
   }
@@ -69,7 +69,7 @@
       { "@type": "Question", "name": "Does clipagent work without an API key?",
         "acceptedAnswer": { "@type": "Answer", "text": "Yes. Without a key, clipagent picks clips with its built-in scorer, which looks at hooks, pacing, payoff phrases and audio energy. An Anthropic (Claude) or Google (Gemini) key makes the picks noticeably better and adds titles, descriptions and hashtags." } },
       { "@type": "Question", "name": "Which videos can I use?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more), or a link from YouTube, Vimeo, Twitch, X and the other sites yt-dlp supports." } },
+        "acceptedAnswer": { "@type": "Answer", "text": "Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more). Links from YouTube, Vimeo, Twitch and X work when you run clipagent yourself." } },
       { "@type": "Question", "name": "Do my videos leave my computer?",
         "acceptedAnswer": { "@type": "Answer", "text": "No. Transcription, face tracking and rendering all happen locally. If you set an AI key, only the transcript text is sent to Claude or Gemini to choose highlights." } },
       { "@type": "Question", "name": "How does clipagent decide who to follow in the frame?",
@@ -247,7 +247,7 @@
           <li class="step reveal">
             <span class="step-num font-serif">i.</span>
             <h3>Drop a video</h3>
-            <p>Upload a file or paste a link from YouTube, Vimeo, Twitch or X. Podcasts, interviews, streams and talks all work.</p>
+            <p>Upload a video file. Podcasts, interviews, streams and talks all work.</p>
           </li>
           <li class="step reveal" style="transition-delay: 150ms">
             <span class="step-num font-serif">ii.</span>
@@ -257,7 +257,7 @@
           <li class="step reveal" style="transition-delay: 300ms">
             <span class="step-num font-serif">iii.</span>
             <h3>Review and download</h3>
-            <p>Trim on the transcript, change the title, layout or colours, then re-render and download in one click.</p>
+            <p>Watch each clip with its virality score and why it was picked, then download the ones you like.</p>
           </li>
         </ol>
       </div>
@@ -292,7 +292,7 @@ clipagent podcast.mp4 --emoji</code></pre>
           <details class="reveal"><summary>Does it work without an API key?</summary>
             <p>Yes. Without a key, a built-in scorer picks clips by looking at hooks, pacing, payoff phrases and audio energy. A Claude or Gemini key makes the picks noticeably better and adds titles, descriptions and hashtags.</p></details>
           <details class="reveal"><summary>Which videos can I use?</summary>
-            <p>Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more), or a link from YouTube, Vimeo, Twitch, X and the other sites yt-dlp supports.</p></details>
+            <p>Any video or audio file ffmpeg can read (MP4, MOV, MKV, WebM, MP3 and more). Links from YouTube, Vimeo, Twitch and X work when you run clipagent yourself.</p></details>
           <details class="reveal"><summary>Do my videos leave my computer?</summary>
             <p>No. Transcription, face tracking and rendering all happen locally. If you set an AI key, only the transcript text is sent to Claude or Gemini to choose highlights.</p></details>
           <details class="reveal"><summary>How does it decide who to follow in the frame?</summary>

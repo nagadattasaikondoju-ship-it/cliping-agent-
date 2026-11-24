@@ -124,6 +124,7 @@ In **public mode**, which the Modal app turns on:
 - each visitor can process one video at a time
 - uploads are limited to 500 MB and 30 minutes (change with `CLIPAGENT_MAX_UPLOAD_MB` and `CLIPAGENT_MAX_MINUTES`)
 - projects are deleted after 24 hours
+- visitors upload files only, and clips can be reviewed and downloaded but not edited. Set `CLIPAGENT_LINKS=1` and `CLIPAGENT_EDITING=1` to turn links and the editor back on.
 
 **Deploy from your computer:**
 

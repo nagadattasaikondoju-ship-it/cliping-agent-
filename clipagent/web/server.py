@@ -82,12 +82,32 @@ class PublicLimits:
                    max_queue=int(e("CLIPAGENT_MAX_QUEUE", 8)))
 
 
+def _feature(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return default if not value else value in ("1", "true", "yes", "on")
+
+
+@dataclasses.dataclass
+class Features:
+    """Parts of the studio that can be switched off. Both are off by default on a
+    public studio: links (YouTube often blocks servers) and the clip editor."""
+
+    links: bool = True      # start a project from a URL
+    editing: bool = True    # trim, retitle, restyle and re-render clips; add custom clips
+
+    @classmethod
+    def from_env(cls, public: bool) -> "Features":
+        return cls(links=_feature("CLIPAGENT_LINKS", not public),
+                   editing=_feature("CLIPAGENT_EDITING", not public))
+
+
 VISITOR_COOKIE = "clipagent_visitor"
 
 
 def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = True,
-               limits: PublicLimits | None = None) -> FastAPI:
+               limits: PublicLimits | None = None, features: Features | None = None) -> FastAPI:
     limits = limits or PublicLimits.from_env()
+    features = features or Features.from_env(limits.enabled)
     store = JobStore(data_dir)
     workers = Workers(store) if start_workers else None
     if workers:
@@ -179,7 +199,12 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     @app.get("/api/config")
     def config():
         return {"public": limits.enabled,
-                "limits": dataclasses.asdict(limits) if limits.enabled else None}
+                "limits": dataclasses.asdict(limits) if limits.enabled else None,
+                "features": dataclasses.asdict(features)}
+
+    def _require_editing() -> None:
+        if not features.editing:
+            raise HTTPException(403, "Editing clips is turned off on this studio.")
 
     # ----------------------------------------------------------------- jobs
     @app.get("/api/jobs")
@@ -247,11 +272,13 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
                                              f"here (this one is {minutes:.0f}).")
             job = store.update(job["id"], source=str(dest), upload=True)
         elif url.strip():
+            if not features.links:
+                raise HTTPException(400, "Links are turned off on this studio. Upload a video file instead.")
             if not is_url(url.strip()):
                 raise HTTPException(400, "url must start with http:// or https://")
             job = store.create(url.strip(), url.strip(), cfg, owner=owner)
         else:
-            raise HTTPException(400, "upload a file or paste a URL")
+            raise HTTPException(400, "upload a file or paste a URL" if features.links else "upload a video file")
         if workers:
             workers.process(job["id"])
         return job
@@ -314,6 +341,7 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     def edit_clip(job_id: str, clip_id: str, request: Request, body: dict = Body(...),
                   render: bool = True):
         _job(job_id, request)
+        _require_editing()
         changes = {k: v for k, v in body.items() if k in CLIP_EDIT_KEYS}
         if "options" in changes:
             allowed = set(Settings.clip_option_keys())
@@ -348,6 +376,7 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     @app.post("/api/jobs/{job_id}/clips")
     def add_clip(job_id: str, request: Request, body: dict = Body(...)):
         _job(job_id, request)
+        _require_editing()
         start, end = float(body.get("start", 0)), float(body.get("end", 0))
         title = str(body.get("title", "")).strip() or "Custom clip"
 
@@ -376,6 +405,7 @@ def create_app(data_dir: str | Path = "clipagent-data", start_workers: bool = Tr
     @app.post("/api/jobs/{job_id}/clips/{clip_id}/render")
     def rerender(job_id: str, clip_id: str, request: Request):
         _job(job_id, request)
+        _require_editing()
         _find(store.manifest(job_id) or {"clips": []}, clip_id)
         if workers:
             workers.render(job_id, clip_id)
