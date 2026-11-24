@@ -1,9 +1,8 @@
-name: modal logs (diagnostic)
+name: modal logs
 
+# Prints the studio's recent logs from Modal. Run it from the Actions tab when
+# the hosted studio misbehaves.
 on:
-  push:
-    branches: ["claude/**"]
-    paths: [".github/workflows/modal-logs.yml"]
   workflow_dispatch:
 
 jobs:
@@ -15,9 +14,5 @@ jobs:
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - run: pip install modal
-      - name: App status
-        run: modal app list || true
-      - name: Wake the studio
-        run: curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 160 https://connect-7605--clipagent-web.us-east.modal.run/api/config &
-      - name: Recent logs
-        run: timeout 150 modal app logs clipagent || true
+      - run: modal app list
+      - run: timeout 120 modal app logs clipagent || true
