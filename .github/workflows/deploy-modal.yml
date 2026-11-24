@@ -14,6 +14,10 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       CLIPAGENT_MODAL_SECRETS: ${{ vars.CLIPAGENT_MODAL_SECRETS }}
+      # Optional, passed to the studio through a Modal Secret named "clipagent-env".
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      YTDLP_COOKIES_TXT: ${{ secrets.YTDLP_COOKIES_TXT }}
     steps:
       - name: Skip if Modal is not configured
         id: check
@@ -32,4 +36,13 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           pip install modal
+          # Copy whichever optional GitHub secrets are set into one Modal Secret.
+          pairs=()
+          for name in GEMINI_API_KEY ANTHROPIC_API_KEY YTDLP_COOKIES_TXT; do
+            if [ -n "${!name}" ]; then pairs+=("$name=${!name}"); echo "passing $name to the studio"; fi
+          done
+          if [ ${#pairs[@]} -gt 0 ]; then
+            modal secret create clipagent-env "${pairs[@]}" --force > /dev/null
+            export CLIPAGENT_MODAL_SECRETS="${CLIPAGENT_MODAL_SECRETS:+$CLIPAGENT_MODAL_SECRETS,}clipagent-env"
+          fi
           modal deploy deploy/modal/app.py

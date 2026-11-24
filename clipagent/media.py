@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -73,6 +75,29 @@ def is_url(source: str) -> bool:
     return bool(_URL_RE.match(source))
 
 
+_BOT_CHECK = ("confirm you’re not a bot", "confirm you're not a bot", "sign in to confirm")
+
+
+def _cookie_file(out_dir: Path, cookies_file: str | None) -> str | None:
+    """The cookies.txt to use: the one passed in, else $YTDLP_COOKIES (a path), else
+    $YTDLP_COOKIES_TXT (the file's contents, e.g. from a hosting secret). Contents are
+    copied into the job folder because yt-dlp writes updated cookies back to the file."""
+    path = cookies_file or os.environ.get("YTDLP_COOKIES")
+    if path:
+        return path
+    text = os.environ.get("YTDLP_COOKIES_TXT", "").strip()
+    if not text:
+        return None
+    if "\t" not in text:  # pasted as base64 (single line, no tabs)
+        try:
+            text = base64.b64decode(text, validate=False).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            pass
+    dest = out_dir / "cookies.txt"
+    dest.write_text(text.replace("\r\n", "\n") + "\n")
+    return str(dest)
+
+
 def download(url: str, out_dir: Path, cookies_file: str | None = None,
              cookies_from_browser: str | None = None, max_minutes: float = 0) -> Path:
     """Download a video (YouTube, Vimeo, X, Twitch VODs, ...) with yt-dlp."""
@@ -93,15 +118,26 @@ def download(url: str, out_dir: Path, cookies_file: str | None = None,
         from yt_dlp.utils import match_filter_func
 
         opts["match_filter"] = match_filter_func(f"duration <= {int(max_minutes * 60)}")
-    if cookies_file:
-        opts["cookiefile"] = cookies_file
+    cookies = _cookie_file(out_dir, cookies_file)
+    if cookies:
+        opts["cookiefile"] = cookies
     if cookies_from_browser:
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        path = Path(ydl.prepare_filename(info))
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            path = Path(ydl.prepare_filename(info))
+    except Exception as exc:
+        if any(s in str(exc).lower() for s in _BOT_CHECK):
+            hint = ("The YouTube cookies on this server have expired or were rejected; "
+                    "export fresh ones." if cookies else
+                    "Download the video yourself and upload the file instead. To fix links "
+                    "for good, give the server YouTube cookies (see README: YouTube links).")
+            raise MediaError(f"YouTube blocked the download from this server (it asks to sign "
+                             f"in to prove it's not a bot). {hint}") from exc
+        raise
     if not path.exists():
-        candidates = sorted(out_dir.glob("source.*"))
+        candidates = sorted(p for p in out_dir.glob("source.*"))
         if not candidates:
             if max_minutes:
                 raise MediaError(f"Nothing was downloaded. The video may be longer than the "

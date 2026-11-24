@@ -32,7 +32,7 @@ long video / URL ──► transcribe (Whisper, word timestamps)
 | **An AI key**: `ANTHROPIC_API_KEY` *or* `GEMINI_API_KEY` | strongly recommended | Claude: [console.anthropic.com](https://console.anthropic.com) · Gemini: [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Without one, clip picks come from heuristics only. If both are set, Claude is used unless you pass `--llm-provider gemini`. |
 | An NVIDIA GPU | optional | Transcription runs 5–10× faster. Use `install.sh --gpu` or the GPU Docker image. |
 | `PIXABAY_API_KEY` or `PEXELS_API_KEY` | only for stock B-roll | Free at [pixabay.com/api/docs](https://pixabay.com/api/docs/) (key shown right after signup) or [pexels.com/api](https://www.pexels.com/api/). With both set, Pexels is tried first and Pixabay fills in. `--broll-dir` works without either. |
-| YouTube cookies | only for YouTube links on servers | `--cookies-from-browser chrome`, or `YTDLP_COOKIES` |
+| YouTube cookies | only for YouTube links on servers | `--cookies-from-browser chrome`, `YTDLP_COOKIES=/path/cookies.txt`, or the file's contents in `YTDLP_COOKIES_TXT` |
 | Internet on first run | yes | Downloads the Whisper model (`small` ≈ 480 MB) and the face model (230 KB) once, then caches them. |
 
 Run `clipagent doctor` at any time to see what's set up and what's missing. Add `--online` to test each API key with a real (free) request: if a key "doesn't work", this shows the error.
@@ -138,11 +138,22 @@ modal deploy deploy/modal/app.py
 2. In GitHub, open the repo's **Settings → Secrets and variables → Actions** and add two repository secrets: `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
 3. Run the workflow from **Actions → "deploy studio (Modal)" → Run workflow**. The log prints the URL, `https://<workspace>--clipagent-web.modal.run`.
 
-**AI-picked clips (optional):**
-1. Create a Modal Secret (e.g. `clipagent-ai`) containing `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
-2. Add a GitHub repository variable `CLIPAGENT_MODAL_SECRETS=clipagent-ai`.
+**Keys for the hosted studio (optional):** add any of these as GitHub repository secrets. The deploy copies them into a Modal Secret called `clipagent-env`.
 
-All visitors' transcripts then use your quota.
+| Secret | What it does |
+|---|---|
+| `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` | AI-picked clips. All visitors' transcripts use your quota. |
+| `YTDLP_COOKIES_TXT` | YouTube links. See below. |
+
+You can also attach your own Modal Secrets by name with the repository variable `CLIPAGENT_MODAL_SECRETS`.
+
+**YouTube links:** YouTube blocks downloads from cloud servers ("Sign in to confirm you're not a bot"). Visitors can always upload the file instead. To make links work:
+1. Sign in to YouTube in Chrome or Firefox. Using a spare Google account is best, because YouTube may flag accounts used this way.
+2. Install the **Get cookies.txt LOCALLY** extension, open youtube.com, and export the cookies.
+3. Open the downloaded `cookies.txt` and paste its whole contents into a GitHub secret named `YTDLP_COOKIES_TXT`.
+4. Run **Actions → "deploy studio (Modal)" → Run workflow**.
+
+The cookies expire after a while (often a few weeks). When links start failing again, export fresh ones and repeat steps 3–4. Even with cookies, YouTube sometimes blocks server downloads anyway.
 
 **Link the website to the studio:** in Vercel, add the env var `CLIPAGENT_STUDIO_URL` with the studio URL and redeploy. The "Open studio" buttons will then go to the hosted studio.
 
