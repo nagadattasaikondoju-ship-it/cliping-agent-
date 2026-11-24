@@ -25,6 +25,9 @@ import modal
 # container this file lives at /root/app.py, which has no grandparent folder.
 ROOT = Path(__file__).resolve().parents[2] if modal.is_local() else Path("/")
 
+# Modal Secrets to attach, e.g. "clipagent-env" (set by the GitHub deploy workflow).
+SECRET_NAMES = os.environ.get("CLIPAGENT_MODAL_SECRETS", "")
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg", "fonts-noto-color-emoji", "fonts-inter", "fontconfig")
@@ -42,12 +45,14 @@ image = (
         "CLIPAGENT_PUBLIC": "1",
         "CLIPAGENT_PUBLIC_URL": os.environ.get("CLIPAGENT_PUBLIC_URL", "https://clipagent-ten.vercel.app"),
         "PYTHONUNBUFFERED": "1",
+        "CLIPAGENT_MODAL_SECRETS": SECRET_NAMES,
     })
 )
 
 data = modal.Volume.from_name("clipagent-data", create_if_missing=True)
-secrets = [modal.Secret.from_name(name.strip())
-           for name in os.environ.get("CLIPAGENT_MODAL_SECRETS", "").split(",") if name.strip()]
+# The container re-imports this file and must see the same Secrets as the deploy did,
+# so the list is baked into the image's environment above.
+secrets = [modal.Secret.from_name(name.strip()) for name in SECRET_NAMES.split(",") if name.strip()]
 
 app = modal.App("clipagent")
 
