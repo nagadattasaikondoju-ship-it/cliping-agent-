@@ -1,0 +1,23 @@
+name: modal logs (diagnostic)
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: [".github/workflows/modal-logs.yml"]
+  workflow_dispatch:
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - run: pip install modal
+      - name: App status
+        run: modal app list || true
+      - name: Wake the studio
+        run: curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" --max-time 160 https://connect-7605--clipagent-web.us-east.modal.run/api/config &
+      - name: Recent logs
+        run: timeout 150 modal app logs clipagent || true
