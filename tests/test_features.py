@@ -245,3 +245,55 @@ def test_end_to_end_with_broll_and_emoji(sample_video, tmp_path):
     project.render(c, 1)
     assert c.status == "done" and not c.emojis and not c.broll
     assert abs(probe(c.output_path).duration - c.duration) < 0.5
+
+
+# --- YouTube cookies and bot checks -------------------------------------------------
+
+COOKIES = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc\n"
+
+
+def test_cookie_file_from_env_contents(tmp_path, monkeypatch):
+    import base64
+
+    from clipagent.media import _cookie_file
+
+    monkeypatch.delenv("YTDLP_COOKIES", raising=False)
+    monkeypatch.delenv("YTDLP_COOKIES_TXT", raising=False)
+    assert _cookie_file(tmp_path, None) is None
+    assert _cookie_file(tmp_path, "/given.txt") == "/given.txt"
+
+    monkeypatch.setenv("YTDLP_COOKIES_TXT", COOKIES)
+    path = _cookie_file(tmp_path, None)
+    assert open(path).read().strip() == COOKIES.strip()
+
+    monkeypatch.setenv("YTDLP_COOKIES_TXT", base64.b64encode(COOKIES.encode()).decode())
+    assert "\tSID\tabc" in open(_cookie_file(tmp_path, None)).read()
+
+
+def test_youtube_bot_check_gives_a_clear_error(tmp_path, monkeypatch):
+    import yt_dlp
+
+    from clipagent.media import MediaError, download
+
+    class Blocked:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download=True):
+            raise yt_dlp.utils.DownloadError(
+                "ERROR: [youtube] x: Sign in to confirm you’re not a bot.")
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", Blocked)
+    monkeypatch.delenv("YTDLP_COOKIES", raising=False)
+    monkeypatch.delenv("YTDLP_COOKIES_TXT", raising=False)
+    with pytest.raises(MediaError, match="upload the file instead"):
+        download("https://youtu.be/x", tmp_path)
+    monkeypatch.setenv("YTDLP_COOKIES_TXT", COOKIES)
+    with pytest.raises(MediaError, match="expired or were rejected"):
+        download("https://youtu.be/x", tmp_path)

@@ -163,7 +163,7 @@ def run_checks(whisper_model: str = "small", online: bool = False) -> list[Check
         else:
             checks.append(Check(f"B-roll ({name})", OK, f"{SOURCES[name][0]} is set"))
 
-    if os.environ.get("YTDLP_COOKIES") or os.environ.get("YTDLP_COOKIES_FROM_BROWSER"):
+    if any(os.environ.get(k) for k in ("YTDLP_COOKIES", "YTDLP_COOKIES_TXT", "YTDLP_COOKIES_FROM_BROWSER")):
         checks.append(Check("YouTube cookies", OK, "configured"))
     else:
         checks.append(Check("YouTube cookies", WARN, "not configured (only needed for YouTube URLs "
